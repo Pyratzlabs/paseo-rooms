@@ -75,13 +75,20 @@ async function main(): Promise<void> {
 
   // -- setup: a throwaway agent with existing history ------------------------
   const cwd = process.env.E2E_CWD ?? fs.mkdtempSync(path.join(os.tmpdir(), "paseo-rooms-e2e-"));
-  console.log("\ncreating throwaway agent…");
+  // Prefer a small fast model for the test agent; fall back to the default.
+  const { models } = await client.providers.listModels(PROVIDER as never);
+  const model =
+    models.find((m: { id: string }) => m.id.includes("haiku")) ??
+    models.find((m: { isDefault?: boolean }) => m.isDefault) ??
+    models[0];
+  console.log(`\ncreating throwaway agent (${PROVIDER}/${model.id})…`);
   const agent = await client.agents.create({
-    config: { provider: PROVIDER as never, cwd } as never,
+    config: { provider: `${PROVIDER}/${model.id}` } as never,
+    cwd,
     prompt:
-      'You are in a live protocol test. Reply with exactly "HISTORY-MARKER-1" and nothing else. ' +
-      "For every later message in this session: reply with exactly the text ECHO(<sender name>) " +
-      "where <sender name> is the name in the [brackets] header of that message. No other text, no tools.",
+      "Hi! We are demoing a shared chat room where several people talk to you; each message " +
+      "starts with the sender's name in [brackets]. Please reply with a one-line hello that " +
+      "includes the token HISTORY-MARKER-1, and from now on always greet each sender by name.",
   } as never);
   const first = await agent.waitForFinish(180_000);
   check("throwaway agent produced initial history", (first.lastMessage ?? "").includes("HISTORY-MARKER-1"));
@@ -121,29 +128,29 @@ async function main(): Promise<void> {
   const sendA = await fetch(`${BASE_URL}/api/rooms/${token}/messages`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message: "Test message one.", name: "Alice" }),
+    body: JSON.stringify({ message: "Hello! Please greet me by my name.", name: "Alice" }),
   });
   check("Alice's send accepted", sendA.status === 202);
 
-  await waitFor(() => sawUserMessage(a, "Test message one.") && sawUserMessage(b, "Test message one."), 15_000, "Alice's message on both sockets");
+  await waitFor(() => sawUserMessage(a, "[Alice]") && sawUserMessage(b, "[Alice]"), 15_000, "Alice's message on both sockets");
   check("browser A sees Alice's message live", sawUserMessage(a, "[Alice]"));
   check("browser B sees Alice's message live", sawUserMessage(b, "[Alice]"));
 
-  await waitFor(() => sawAssistantText(a, "ECHO(Alice)") && sawAssistantText(b, "ECHO(Alice)"), 120_000, "agent reply to Alice on both sockets");
-  check("agent reply streams to browser A", sawAssistantText(a, "ECHO(Alice)"));
-  check("agent reply streams to browser B", sawAssistantText(b, "ECHO(Alice)"));
+  await waitFor(() => sawAssistantText(a, "Alice") && sawAssistantText(b, "Alice"), 120_000, "agent reply to Alice on both sockets");
+  check("agent reply streams to browser A", sawAssistantText(a, "Alice"));
+  check("agent reply streams to browser B", sawAssistantText(b, "Alice"));
 
   console.log("\nBob (B) sends a message…");
   const sendB = await fetch(`${BASE_URL}/api/rooms/${token}/messages`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message: "Test message two.", name: "Bob", agent_id: "some-other-agent" }),
+    body: JSON.stringify({ message: "Hi, I just joined — please greet me by my name too.", name: "Bob", agent_id: "some-other-agent" }),
   });
   check("Bob's send accepted (extra agent_id field ignored)", sendB.status === 202);
 
-  await waitFor(() => sawAssistantText(a, "ECHO(Bob)") && sawAssistantText(b, "ECHO(Bob)"), 120_000, "agent reply to Bob on both sockets");
+  await waitFor(() => sawAssistantText(a, "Bob") && sawAssistantText(b, "Bob"), 120_000, "agent reply to Bob on both sockets");
   check("browser A sees Bob's message live", sawUserMessage(a, "[Bob]"));
-  check("agent reply to Bob streams to both browsers", sawAssistantText(a, "ECHO(Bob)") && sawAssistantText(b, "ECHO(Bob)"));
+  check("agent reply to Bob streams to both browsers", sawAssistantText(a, "Bob") && sawAssistantText(b, "Bob"));
 
   // -- both messages landed on the same underlying Paseo agent ---------------
   const page = await agent.timeline.refetch({ direction: "tail", limit: 200, projection: "projected" });

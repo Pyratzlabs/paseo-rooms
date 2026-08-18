@@ -1,0 +1,63 @@
+# paseo-rooms
+
+Proof of concept: **share one Paseo coding-agent session with a collaborator via
+a capability URL**, without giving them access to your Paseo daemon.
+
+Two humans open the same `http://localhost:3000/r/<token>` link in separate
+browsers, both see the agent's full conversation, both can send messages to the
+same running agent, and replies stream live to everyone. The link grants access
+to exactly one agent — nothing else on the daemon.
+
+See [docs/design.md](docs/design.md) for the architecture, the Paseo APIs used,
+plugin-system findings, and the security model.
+
+## Prerequisites
+
+- A running Paseo daemon (desktop app or `paseo` CLI) on
+  `ws://127.0.0.1:6767/ws` (override with `PASEO_URL`, and `PASEO_PASSWORD` if
+  your daemon requires it).
+- Node.js ≥ 20.
+
+## Run the demo
+
+```bash
+npm install
+npm start                       # room server on http://localhost:3000
+```
+
+In a second terminal, pick an agent and mint a share link:
+
+```bash
+npm run share                   # lists your recent agents
+npm run share -- <agent-id>     # id prefix is enough; prints the share URL
+```
+
+Then:
+
+1. Open the printed `http://localhost:3000/r/<token>` in your browser.
+2. Open the same URL in an incognito window (your "collaborator").
+3. Both windows show the agent's existing history; enter different names and
+   chat — messages are attributed as `[Name]` and go to the same Paseo agent,
+   and replies stream to both windows. Reloading restores history from Paseo.
+
+## Test
+
+With the daemon and the room server running:
+
+```bash
+npm run e2e
+```
+
+This creates a throwaway agent (Haiku by default, `E2E_PROVIDER`/`E2E_CWD` to
+override), shares it, simulates two browsers over the public API/WebSocket, and
+asserts the full PoC contract: history on join, live fan-out both ways, both
+messages landing on the same agent timeline, reload-restores-history, invalid
+tokens rejected, client-supplied `agent_id` ignored, agent id never exposed.
+The agent is archived afterwards. `npm run typecheck` type-checks the code.
+
+## State
+
+- `data/rooms.json` — `share_token -> agent` mappings (the only state this
+  service owns; the conversation lives in Paseo).
+- `data/admin-token` — bearer token required to create rooms; the `share`
+  script reads it locally. Collaborators never need it.
