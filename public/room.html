@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shared Paseo session</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, sans-serif; margin: 0;
+    display: flex; flex-direction: column; height: 100dvh;
+    background: Canvas; color: CanvasText;
+  }
+  header {
+    padding: 0.6rem 1rem; border-bottom: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+    display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap;
+  }
+  header h1 { font-size: 1rem; margin: 0; }
+  #status { font-size: 0.8rem; opacity: 0.7; }
+  #live { font-size: 0.8rem; }
+  #timeline { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  .msg { max-width: 46rem; padding: 0.5rem 0.75rem; border-radius: 0.6rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .user { align-self: flex-end; background: color-mix(in srgb, royalblue 25%, Canvas); }
+  .assistant { align-self: flex-start; background: color-mix(in srgb, CanvasText 8%, Canvas); }
+  .meta { align-self: flex-start; font-size: 0.78rem; opacity: 0.65; padding: 0 0.25rem; }
+  .author { font-size: 0.72rem; font-weight: 600; opacity: 0.8; display: block; margin-bottom: 0.15rem; }
+  .reasoning { font-style: italic; opacity: 0.55; font-size: 0.85rem; }
+  #working { display: none; padding: 0 1rem 0.5rem; font-size: 0.85rem; opacity: 0.7; }
+  form { display: flex; gap: 0.5rem; padding: 0.75rem 1rem; border-top: 1px solid color-mix(in srgb, CanvasText 15%, transparent); }
+  input, textarea, button { font: inherit; }
+  #name { width: 8rem; padding: 0.5rem; border-radius: 0.4rem; border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); background: Canvas; color: inherit; }
+  #message { flex: 1; padding: 0.5rem; border-radius: 0.4rem; border: 1px solid color-mix(in srgb, CanvasText 25%, transparent); background: Canvas; color: inherit; resize: none; }
+  button { padding: 0.5rem 1rem; border-radius: 0.4rem; border: none; background: royalblue; color: white; cursor: pointer; }
+  #error { display: none; margin: auto; text-align: center; }
+</style>
+</head>
+<body>
+  <header>
+    <h1 id="title">Shared session</h1>
+    <span id="status"></span>
+    <span id="live"></span>
+  </header>
+  <div id="error"><h2>Invalid or expired share link</h2><p>Ask the host for a new link.</p></div>
+  <div id="timeline"></div>
+  <div id="working">agent is working…</div>
+  <form id="form">
+    <input id="name" placeholder="Your name" autocomplete="off">
+    <textarea id="message" rows="1" placeholder="Message the agent…"></textarea>
+    <button type="submit">Send</button>
+  </form>
+  <script src="/room.js"></script>
+</body>
+</html>
