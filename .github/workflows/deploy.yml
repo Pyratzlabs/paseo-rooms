@@ -1,0 +1,52 @@
+# Deploys the relay (only) to the VPS on every push to main. No-ops with a
+# notice (not a failure) when the required secrets aren't configured yet, so
+# CI stays green before the VPS exists. See deploy/README.md for the secrets
+# this workflow needs and how to add them.
+
+name: Deploy relay
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check required secrets
+        id: check
+        run: |
+          if [[ -z "${{ secrets.SSH_PRIVATE_KEY }}" || -z "${{ secrets.SSH_TARGET }}" || \
+                -z "${{ secrets.ROOMS_DOMAIN }}" || -z "${{ secrets.RELAY_KEY }}" ]]; then
+            echo "::notice::Skipping deploy — one or more of SSH_PRIVATE_KEY, SSH_TARGET, ROOMS_DOMAIN, RELAY_KEY secrets are not set. See deploy/README.md."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout
+        if: steps.check.outputs.ready == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up SSH
+        if: steps.check.outputs.ready == 'true'
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$(echo "${{ secrets.SSH_TARGET }}" | sed 's/.*@//')" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Deploy
+        if: steps.check.outputs.ready == 'true'
+        env:
+          SSH_TARGET: ${{ secrets.SSH_TARGET }}
+          ROOMS_DOMAIN: ${{ secrets.ROOMS_DOMAIN }}
+          RELAY_KEY: ${{ secrets.RELAY_KEY }}
+          SSH_OPTS: "-i ~/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+        run: bash deploy/deploy.sh
+
+      - name: Skipped
+        if: steps.check.outputs.ready != 'true'
+        run: echo "Deploy skipped — required secrets not configured."

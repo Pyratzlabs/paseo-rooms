@@ -1,0 +1,8 @@
+# Caddy auto-TLS reverse proxy in front of the relay. Caddy issues/renews a
+# cert for ${ROOMS_DOMAIN} via Let's Encrypt and forwards everything
+# (including WebSocket upgrades, which Caddy passes through by default) to
+# the relay container on the internal compose network.
+
+{$ROOMS_DOMAIN} {
+	reverse_proxy relay:8080
+}

@@ -1,0 +1,37 @@
+# Deployed to the VPS only. Two services: the relay (the only paseo-rooms
+# component that lives off developers' laptops, see docs/plan.md) and Caddy
+# for auto-TLS termination + WebSocket passthrough in front of it.
+#
+# Usage: RELAY_KEY and ROOMS_DOMAIN come from a .env file next to this
+# compose.yml on the VPS (see deploy/README.md) — never baked into the image.
+
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.relay
+    environment:
+      RELAY_KEY: ${RELAY_KEY:?RELAY_KEY is required}
+      RELAY_PORT: "8080"
+    restart: unless-stopped
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      ROOMS_DOMAIN: ${ROOMS_DOMAIN:?ROOMS_DOMAIN is required}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - relay
+
+volumes:
+  caddy_data:
+  caddy_config:

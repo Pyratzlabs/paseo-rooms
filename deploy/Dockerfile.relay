@@ -1,0 +1,35 @@
+# Builds and runs ONLY the paseo-rooms relay (src/relay/). The relay is the
+# single thing deployed to the VPS; the room server and daemon stay on
+# developers' laptops (see docs/plan.md). Kept intentionally minimal: no
+# @getpaseo/client, no room server, no build tooling beyond tsx at runtime.
+
+FROM node:22-alpine
+
+WORKDIR /app
+
+# A trimmed package.json/lockfile-free install: only the relay's runtime
+# dependency (ws) and tsx to run the TypeScript source directly, so we avoid
+# a separate build stage while keeping the image small.
+RUN printf '%s\n' \
+  '{' \
+  '  "name": "paseo-rooms-relay",' \
+  '  "version": "0.1.0",' \
+  '  "private": true,' \
+  '  "type": "module",' \
+  '  "dependencies": {' \
+  '    "ws": "^8.18.0"' \
+  '  },' \
+  '  "devDependencies": {' \
+  '    "tsx": "^4.19.0"' \
+  '  }' \
+  '}' > package.json
+
+RUN npm install --no-audit --no-fund && npm cache clean --force
+
+# Only the relay source is copied into the image.
+COPY src/relay ./src/relay
+
+ENV NODE_ENV=production
+EXPOSE 8080
+
+CMD ["npx", "tsx", "src/relay/relay.ts"]
