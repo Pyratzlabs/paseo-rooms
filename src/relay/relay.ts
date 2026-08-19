@@ -359,7 +359,14 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
         close: () =>
           new Promise<void>((done) => {
             clearInterval(heartbeat);
-            for (const host of hosts) host.ws.terminate();
+            for (const host of hosts) {
+              // Browser sockets are upgraded connections: `server.close()` will
+              // not complete while they are open, so drop them explicitly.
+              for (const browser of host.browsers.values()) browser.terminate();
+              host.browsers.clear();
+              host.ws.terminate();
+            }
+            for (const browser of browserWss.clients) browser.terminate();
             hosts.clear();
             routes.clear();
             hostWss.close();

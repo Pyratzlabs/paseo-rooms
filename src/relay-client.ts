@@ -1,0 +1,294 @@
+/**
+ * Laptop-side dial-out client for "Relay protocol v1" (docs/plan.md).
+ *
+ * When `RELAY_URL` (+ `RELAY_KEY`) is set, the room server keeps ONE outbound
+ * WebSocket to the relay open forever: it registers the room tokens it owns,
+ * answers forwarded HTTP requests and WebSocket events by dispatching into the
+ * exact same handlers that serve local traffic, and reconnects with backoff.
+ *
+ * Nothing about the daemon (credentials, agent ids) crosses this connection —
+ * the relay only ever sees room tokens and opaque response bytes.
+ */
+
+import { WebSocket } from "ws";
+import { PROTOCOL_VERSION, type LaptopFrame, type RelayFrame } from "./relay/protocol.js";
+
+/**
+ * Parse a frame received from the relay. Mirror image of the relay's
+ * `parseLaptopFrame`: anything malformed is dropped rather than trusted.
+ */
+function parseRelayFrame(raw: string): RelayFrame | null {
+  let msg: unknown;
+  try {
+    msg = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (typeof msg !== "object" || msg === null) return null;
+  const f = msg as Record<string, unknown>;
+  if (f.v !== PROTOCOL_VERSION) return null;
+
+  switch (f.type) {
+    case "http_request":
+      if (typeof f.id !== "string" || typeof f.method !== "string" || typeof f.path !== "string") return null;
+      return {
+        v: 1,
+        type: "http_request",
+        id: f.id,
+        method: f.method,
+        path: f.path,
+        headers: isHeaders(f.headers) ? f.headers : {},
+        bodyB64: typeof f.bodyB64 === "string" ? f.bodyB64 : "",
+      };
+    case "ws_event":
+      if (typeof f.id !== "string") return null;
+      if (f.event !== "open" && f.event !== "message" && f.event !== "close") return null;
+      return {
+        v: 1,
+        type: "ws_event",
+        id: f.id,
+        event: f.event,
+        ...(typeof f.path === "string" ? { path: f.path } : {}),
+        ...(typeof f.dataB64 === "string" ? { dataB64: f.dataB64 } : {}),
+      };
+    case "ping":
+      return { v: 1, type: "ping", t: typeof f.t === "number" ? f.t : 0 };
+    case "register_rejected":
+      return typeof f.token === "string" ? { v: 1, type: "register_rejected", token: f.token } : null;
+    default:
+      return null;
+  }
+}
+
+function isHeaders(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Object.values(value as Record<string, unknown>).every((v) => typeof v === "string")
+  );
+}
+
+// ---- the contract this client needs from the room server -------------------
+
+/** A protocol-agnostic view of an inbound request. */
+export interface ApiRequest {
+  method: string;
+  /** Request target, may include a query string. */
+  path: string;
+  headers: Record<string, string>;
+  body: Buffer;
+}
+
+export interface ApiResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: Buffer;
+}
+
+/**
+ * The subset of a browser WebSocket the room fan-out actually uses. Local
+ * `ws` sockets and relay-forwarded virtual sockets both implement it, so
+ * `joinRoom` cannot tell them apart.
+ */
+export interface RoomSocket {
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+  /** Register a close callback (fires once, whoever closed first). */
+  onClose(handler: () => void): void;
+}
+
+export interface RelayClientHooks {
+  handleRequest(req: ApiRequest): Promise<ApiResponse>;
+  /** Attach a virtual browser socket to a room; false = reject (404). */
+  openSocket(path: string, socket: RoomSocket): Promise<boolean>;
+  /** All room tokens that currently exist, re-sent on every (re)connect. */
+  currentTokens(): string[];
+}
+
+export interface RelayClientOptions extends RelayClientHooks {
+  url: string;
+  key: string;
+  /** Backoff bounds; overridable so tests do not wait seconds. */
+  minBackoffMs?: number;
+  maxBackoffMs?: number;
+  log?: (line: string) => void;
+}
+
+export interface RelayClient {
+  /** Claim tokens (call on room creation). No-op while disconnected — the
+   *  full set is re-registered on the next connect anyway. */
+  register(tokens: string[]): void;
+  /** Release tokens (call on revocation). */
+  unregister(tokens: string[]): void;
+  connected(): boolean;
+  close(): void;
+}
+
+export function startRelayClient(options: RelayClientOptions): RelayClient {
+  const minBackoff = options.minBackoffMs ?? 1_000;
+  const maxBackoff = options.maxBackoffMs ?? 30_000;
+  const log = options.log ?? ((line: string) => console.log(line));
+
+  let ws: WebSocket | null = null;
+  let stopped = false;
+  let backoff = minBackoff;
+  let retryTimer: NodeJS.Timeout | null = null;
+  /** Virtual browser sockets, keyed by the relay's per-socket id. */
+  const sockets = new Map<string, VirtualSocket>();
+
+  function send(frame: LaptopFrame): void {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
+  }
+
+  /** A relay-forwarded browser socket, dressed up as a local room socket. */
+  class VirtualSocket implements RoomSocket {
+    private closed = false;
+    private handlers: Array<() => void> = [];
+
+    constructor(readonly id: string) {}
+
+    send(data: string): void {
+      if (this.closed) return;
+      send({ v: 1, type: "ws_event", id: this.id, event: "message", dataB64: Buffer.from(data).toString("base64") });
+    }
+
+    /** Close initiated by us (revocation, subscription failure): tell the relay. */
+    close(): void {
+      if (this.closed) return;
+      send({ v: 1, type: "ws_event", id: this.id, event: "close" });
+      this.remoteClosed();
+    }
+
+    /** Close initiated by the browser or by losing the relay: local teardown. */
+    remoteClosed(): void {
+      if (this.closed) return;
+      this.closed = true;
+      sockets.delete(this.id);
+      for (const handler of this.handlers) handler();
+      this.handlers = [];
+    }
+
+    onClose(handler: () => void): void {
+      if (this.closed) handler();
+      else this.handlers.push(handler);
+    }
+  }
+
+  function dropAllSockets(): void {
+    for (const socket of [...sockets.values()]) socket.remoteClosed();
+    sockets.clear();
+  }
+
+  function connect(): void {
+    if (stopped) return;
+    const socket = new WebSocket(options.url, { headers: { "x-relay-key": options.key } });
+    ws = socket;
+
+    socket.on("open", () => {
+      backoff = minBackoff;
+      const tokens = options.currentTokens();
+      log(`[relay-client] connected to ${options.url} (registering ${tokens.length} token(s))`);
+      if (tokens.length > 0) send({ v: 1, type: "register", tokens });
+    });
+
+    socket.on("message", (data) => {
+      const frame = parseRelayFrame(typeof data === "string" ? data : data.toString());
+      if (!frame) return;
+
+      switch (frame.type) {
+        case "ping":
+          send({ v: 1, type: "pong", t: frame.t });
+          break;
+
+        case "register_rejected":
+          log(`[relay-client] token ${frame.token} is claimed by another room server`);
+          break;
+
+        case "http_request":
+          void (async () => {
+            let response: ApiResponse;
+            try {
+              response = await options.handleRequest({
+                method: frame.method,
+                path: frame.path,
+                headers: frame.headers,
+                body: Buffer.from(frame.bodyB64, "base64"),
+              });
+            } catch (err) {
+              response = {
+                status: 500,
+                headers: { "content-type": "application/json" },
+                body: Buffer.from(
+                  JSON.stringify({ error: err instanceof Error ? err.message : "internal error" }),
+                ),
+              };
+            }
+            send({
+              v: 1,
+              type: "http_response",
+              id: frame.id,
+              status: response.status,
+              headers: response.headers,
+              bodyB64: response.body.toString("base64"),
+            });
+          })();
+          break;
+
+        case "ws_event":
+          if (frame.event === "open") {
+            const virtual = new VirtualSocket(frame.id);
+            sockets.set(frame.id, virtual);
+            void options
+              .openSocket(frame.path ?? "/", virtual)
+              .then((accepted) => {
+                if (!accepted) virtual.close();
+              })
+              .catch(() => virtual.close());
+          } else if (frame.event === "message") {
+            // Room sockets are receive-only today; frames from the browser are
+            // accepted and ignored rather than trusted.
+          } else {
+            sockets.get(frame.id)?.remoteClosed();
+          }
+          break;
+      }
+    });
+
+    const reconnect = (): void => {
+      if (socket !== ws) return; // superseded
+      ws = null;
+      dropAllSockets();
+      if (stopped) return;
+      const jitter = Math.random() * backoff * 0.5;
+      const delay = Math.round(backoff + jitter);
+      log(`[relay-client] disconnected; reconnecting in ${delay}ms`);
+      retryTimer = setTimeout(connect, delay);
+      retryTimer.unref?.();
+      backoff = Math.min(backoff * 2, maxBackoff);
+    };
+
+    socket.on("close", reconnect);
+    socket.on("error", () => {
+      // 'close' always follows; swallow so an unreachable relay is not fatal.
+    });
+  }
+
+  connect();
+
+  return {
+    register: (tokens) => {
+      if (tokens.length > 0) send({ v: 1, type: "register", tokens });
+    },
+    unregister: (tokens) => {
+      if (tokens.length > 0) send({ v: 1, type: "unregister", tokens });
+    },
+    connected: () => ws !== null && ws.readyState === WebSocket.OPEN,
+    close: () => {
+      stopped = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      dropAllSockets();
+      ws?.close();
+      ws = null;
+    },
+  };
+}

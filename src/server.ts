@@ -5,6 +5,13 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import { createRoom, deleteRoom, getAdminToken, getRoom, listRooms, timingSafeEqual, type Room } from "./rooms.js";
 import {
+  startRelayClient,
+  type ApiRequest,
+  type ApiResponse,
+  type RelayClient,
+  type RoomSocket,
+} from "./relay-client.js";
+import {
   agentInfo,
   ensureConnected,
   fetchFullHistory,
@@ -41,7 +48,7 @@ function checkRateLimit(token: string): boolean {
 // ---- live fan-out ----------------------------------------------------------
 
 interface LiveRoom {
-  sockets: Set<WebSocket>;
+  sockets: Set<RoomSocket>;
   unsubscribe: (() => void) | null;
 }
 
@@ -58,7 +65,11 @@ function closeLiveRoom(token: string): void {
   liveRooms.delete(token);
 }
 
-async function joinRoom(room: Room, socket: WebSocket): Promise<void> {
+/**
+ * Attach a browser socket to a room's timeline fan-out. The socket may be a
+ * local `ws` connection or a relay-forwarded virtual one — see `RoomSocket`.
+ */
+async function joinRoom(room: Room, socket: RoomSocket): Promise<void> {
   let live = liveRooms.get(room.token);
   if (!live) {
     live = { sockets: new Set(), unsubscribe: null };
@@ -66,12 +77,12 @@ async function joinRoom(room: Room, socket: WebSocket): Promise<void> {
     live.unsubscribe = await subscribeAgent(room.agentId, ({ event, timestamp }) => {
       const frame = JSON.stringify({ type: "stream", event, timestamp });
       for (const ws of live!.sockets) {
-        if (ws.readyState === WebSocket.OPEN) ws.send(frame);
+        ws.send(frame);
       }
     });
   }
   live.sockets.add(socket);
-  socket.on("close", () => {
+  socket.onClose(() => {
     live!.sockets.delete(socket);
     if (live!.sockets.size === 0) {
       live!.unsubscribe?.();
@@ -80,34 +91,52 @@ async function joinRoom(room: Room, socket: WebSocket): Promise<void> {
   });
 }
 
-// ---- helpers ---------------------------------------------------------------
-
-function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
-  const data = JSON.stringify(body);
-  res.writeHead(status, { "content-type": "application/json" });
-  res.end(data);
+/** Adapt a real `ws` socket to the transport-agnostic `RoomSocket` shape. */
+function wrapWebSocket(ws: WebSocket): RoomSocket {
+  return {
+    send: (data) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(data);
+    },
+    close: (code, reason) => ws.close(code, reason),
+    onClose: (handler) => ws.on("close", handler),
+  };
 }
 
-function readBody(req: http.IncomingMessage): Promise<string> {
+// ---- helpers ---------------------------------------------------------------
+
+function json(status: number, body: unknown): ApiResponse {
+  return {
+    status,
+    headers: { "content-type": "application/json" },
+    body: Buffer.from(JSON.stringify(body)),
+  };
+}
+
+function readBody(req: http.IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    let data = "";
-    req.on("data", (chunk) => {
-      data += chunk;
-      if (data.length > 256 * 1024) reject(new Error("body too large"));
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > 256 * 1024) reject(new Error("body too large"));
+      else chunks.push(chunk);
     });
-    req.on("end", () => resolve(data));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
 }
 
-function serveFile(res: http.ServerResponse, file: string, type: string): void {
+function fileResponse(file: string, type: string): ApiResponse {
   try {
     const content = fs.readFileSync(path.join(PUBLIC_DIR, file));
-    res.writeHead(200, { "content-type": type });
-    res.end(content);
+    return { status: 200, headers: { "content-type": type }, body: content };
   } catch {
-    res.writeHead(404).end("not found");
+    return notFound();
   }
+}
+
+function notFound(): ApiResponse {
+  return { status: 404, headers: { "content-type": "text/plain; charset=utf-8" }, body: Buffer.from("not found") };
 }
 
 /** Collaborator display name: keep it short and unable to fake timeline markup. */
@@ -119,71 +148,82 @@ function sanitizeName(raw: unknown): string | null {
 
 // ---- routes ----------------------------------------------------------------
 
-const server = http.createServer(async (req, res) => {
+/**
+ * The single request handler, shared by the local HTTP listener and by
+ * relay-forwarded `http_request` frames. It takes a plain request shape and
+ * returns a plain response — no `http.IncomingMessage` anywhere.
+ *
+ * Relay-forwarded requests carry only content-type/x-forwarded-for, so the
+ * admin routes below are unreachable through the relay by construction (and
+ * the relay refuses to route `POST /api/rooms` at all).
+ */
+export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
   try {
-    const url = new URL(req.url ?? "/", BASE_URL);
+    const url = new URL(req.path, BASE_URL);
     const parts = url.pathname.split("/").filter(Boolean);
 
     // GET /r/<token> — the shared chat page (token validated client-side via API)
     if (req.method === "GET" && parts[0] === "r" && parts.length === 2) {
-      return serveFile(res, "room.html", "text/html; charset=utf-8");
+      return fileResponse("room.html", "text/html; charset=utf-8");
     }
     if (req.method === "GET" && url.pathname === "/") {
-      return serveFile(res, "index.html", "text/html; charset=utf-8");
+      return fileResponse("index.html", "text/html; charset=utf-8");
     }
 
     // GET /healthz — liveness + daemon connectivity, unauthenticated
     if (req.method === "GET" && url.pathname === "/healthz") {
-      return sendJson(res, 200, { ok: true, daemonConnected: isConnected() });
+      return json(200, { ok: true, daemonConnected: isConnected() });
     }
 
     // Everything below talks to the daemon: fail fast while it's unreachable.
     if (url.pathname.startsWith("/api/") && !isConnected()) {
-      return sendJson(res, 503, { error: "daemon unavailable" });
+      return json(503, { error: "daemon unavailable" });
     }
 
-    function checkAdmin(): boolean {
+    const checkAdmin = (): boolean => {
       const auth = req.headers.authorization ?? "";
       const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
       return timingSafeEqual(bearer, ADMIN_TOKEN);
-    }
+    };
 
     // POST /api/rooms — admin only: create a share room for an agent
     if (req.method === "POST" && url.pathname === "/api/rooms") {
-      if (!checkAdmin()) return sendJson(res, 401, { error: "unauthorized" });
-      const body = JSON.parse((await readBody(req)) || "{}");
+      if (!checkAdmin()) return json(401, { error: "unauthorized" });
+      const body = JSON.parse(req.body.toString() || "{}");
       const agentId = typeof body.agentId === "string" ? body.agentId : null;
-      if (!agentId) return sendJson(res, 400, { error: "agentId required" });
+      if (!agentId) return json(400, { error: "agentId required" });
       const info = await agentInfo(agentId);
-      if (!info) return sendJson(res, 404, { error: "no such agent" });
+      if (!info) return json(404, { error: "no such agent" });
       const room = createRoom(agentId, typeof body.label === "string" ? body.label : info.title ?? "Shared session");
-      return sendJson(res, 201, { token: room.token, url: `${BASE_URL}/r/${room.token}` });
+      relayClient?.register([room.token]);
+      return json(201, { token: room.token, url: `${BASE_URL}/r/${room.token}` });
     }
 
     // GET /api/rooms — admin only: list rooms
     if (req.method === "GET" && url.pathname === "/api/rooms") {
-      if (!checkAdmin()) return sendJson(res, 401, { error: "unauthorized" });
-      return sendJson(res, 200, { rooms: listRooms() });
+      if (!checkAdmin()) return json(401, { error: "unauthorized" });
+      return json(200, { rooms: listRooms() });
     }
 
     // DELETE /api/rooms/<token> — admin only: revoke a room
     if (req.method === "DELETE" && parts[0] === "api" && parts[1] === "rooms" && parts.length === 3) {
-      if (!checkAdmin()) return sendJson(res, 401, { error: "unauthorized" });
+      if (!checkAdmin()) return json(401, { error: "unauthorized" });
       const existed = deleteRoom(parts[2]);
-      if (!existed) return sendJson(res, 404, { error: "unknown room" });
+      if (!existed) return json(404, { error: "unknown room" });
       closeLiveRoom(parts[2]);
-      return sendJson(res, 200, { ok: true });
+      relayClient?.unregister([parts[2]]);
+      return json(200, { ok: true });
     }
 
     // /api/rooms/<token>[/...] — collaborator endpoints, gated on the room token
     if (parts[0] === "api" && parts[1] === "rooms" && parts.length >= 3) {
       const room = getRoom(parts[2]);
-      if (!room) return sendJson(res, 404, { error: "unknown room" });
+      if (!room) return json(404, { error: "unknown room" });
       const rest = parts.slice(3).join("/");
 
       if (req.method === "GET" && rest === "") {
         const info = await agentInfo(room.agentId);
-        return sendJson(res, 200, {
+        return json(200, {
           label: room.label,
           createdAt: room.createdAt,
           agent: info ? { title: info.title, status: info.status, provider: info.provider } : null,
@@ -192,27 +232,62 @@ const server = http.createServer(async (req, res) => {
 
       if (req.method === "GET" && rest === "history") {
         const entries = await fetchFullHistory(room.agentId);
-        return sendJson(res, 200, { entries });
+        return json(200, { entries });
       }
 
       if (req.method === "POST" && rest === "messages") {
-        if (!checkRateLimit(room.token)) return sendJson(res, 429, { error: "rate limit exceeded" });
-        const body = JSON.parse((await readBody(req)) || "{}");
+        if (!checkRateLimit(room.token)) return json(429, { error: "rate limit exceeded" });
+        const body = JSON.parse(req.body.toString() || "{}");
         const message = typeof body.message === "string" ? body.message.trim() : "";
-        if (!message) return sendJson(res, 400, { error: "message required" });
+        if (!message) return json(400, { error: "message required" });
         const name = sanitizeName(body.name);
         // The room's mapping is the only routing authority: any agent_id in the
         // body is ignored.
         const text = name ? `[${name}]\n${message}` : message;
         await sendToAgent(room.agentId, text);
-        return sendJson(res, 202, { ok: true });
+        return json(202, { ok: true });
       }
     }
 
-    res.writeHead(404).end("not found");
+    return notFound();
   } catch (err) {
-    sendJson(res, 500, { error: err instanceof Error ? err.message : "internal error" });
+    return json(500, { error: err instanceof Error ? err.message : "internal error" });
   }
+}
+
+/**
+ * Attach a browser socket for `/api/rooms/<token>/ws`. Returns false when the
+ * token is unknown or the daemon is down (caller answers 404). Used by the
+ * local upgrade path and by relay-forwarded `ws_event: open` frames alike.
+ */
+export async function openRoomSocket(requestPath: string, socket: RoomSocket): Promise<boolean> {
+  if (!isConnected()) return false;
+  const url = new URL(requestPath, BASE_URL);
+  const match = url.pathname.match(/^\/api\/rooms\/([^/]+)\/ws$/);
+  const room = match ? getRoom(match[1]) : undefined;
+  if (!room) return false;
+  await joinRoom(room, socket);
+  return true;
+}
+
+// ---- local HTTP listener ---------------------------------------------------
+
+const server = http.createServer(async (req, res) => {
+  let response: ApiResponse;
+  try {
+    response = await handleApiRequest({
+      method: req.method ?? "GET",
+      path: req.url ?? "/",
+      headers: Object.fromEntries(
+        Object.entries(req.headers).flatMap(([k, v]) => (typeof v === "string" ? [[k, v] as [string, string]] : [])),
+      ),
+      body: await readBody(req),
+    });
+  } catch (err) {
+    response = json(500, { error: err instanceof Error ? err.message : "internal error" });
+  }
+  res.writeHead(response.status, response.headers);
+  res.end(response.body);
 });
 
 // WS /api/rooms/<token>/ws — live timeline fan-out
@@ -246,9 +321,31 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
-    joinRoom(room, ws).catch(() => ws.close(1011, "subscription failed"));
+    joinRoom(room, wrapWebSocket(ws)).catch(() => ws.close(1011, "subscription failed"));
   });
 });
+
+// ---- relay dial-out (opt-in) -----------------------------------------------
+
+let relayClient: RelayClient | null = null;
+
+const RELAY_URL = process.env.RELAY_URL;
+const RELAY_KEY = process.env.RELAY_KEY;
+if (RELAY_URL) {
+  if (!RELAY_KEY) {
+    console.error("RELAY_URL is set but RELAY_KEY is missing — not dialling out to the relay");
+  } else {
+    relayClient = startRelayClient({
+      url: RELAY_URL,
+      key: RELAY_KEY,
+      minBackoffMs: Number(process.env.RELAY_MIN_BACKOFF_MS ?? 1_000),
+      maxBackoffMs: Number(process.env.RELAY_MAX_BACKOFF_MS ?? 30_000),
+      currentTokens: () => listRooms().map((r) => r.token),
+      handleRequest: handleApiRequest,
+      openSocket: openRoomSocket,
+    });
+  }
+}
 
 // Boot resilience: start the HTTP listener immediately so /healthz and
 // static routes work even if the daemon is down; connect (with retry) in the

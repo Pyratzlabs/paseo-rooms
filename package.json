@@ -8,6 +8,7 @@
     "start": "tsx src/server.ts",
     "share": "tsx scripts/share.ts",
     "e2e": "tsx scripts/e2e.ts",
+    "e2e:relay": "tsx scripts/e2e-relay.ts",
     "typecheck": "tsc --noEmit",
     "relay": "tsx src/relay/relay.ts",
     "test:relay": "node --import tsx --test scripts/relay-protocol.test.ts"
