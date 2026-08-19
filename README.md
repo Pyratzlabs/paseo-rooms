@@ -61,3 +61,10 @@ The agent is archived afterwards. `npm run typecheck` type-checks the code.
   service owns; the conversation lives in Paseo).
 - `data/admin-token` — bearer token required to create rooms; the `share`
   script reads it locally. Collaborators never need it.
+
+## Plugin
+
+The Paseo plugin that adds a **Share session** action to the agent context
+lives in a sibling repo: [`../paseo-rooms-plugin`](../paseo-rooms-plugin). It
+boots this room server if it is not running, then mints a share URL for the
+focused agent.
