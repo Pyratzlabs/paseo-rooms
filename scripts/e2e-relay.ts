@@ -280,7 +280,13 @@ async function main(): Promise<void> {
 
   // -- cleanup ----------------------------------------------------------------
   await agent.archive();
-  console.log("\nthrowaway agent archived.");
+  // Also archive the workspace the throwaway cwd created, so test runs don't
+  // pile up junk entries in the user's Paseo sidebar.
+  const workspaces = await client.workspaces.list({});
+  for (const w of workspaces.entries) {
+    if (w.projectRootPath === cwd) await client.workspaces.archive(w.id).catch(() => {});
+  }
+  console.log("\nthrowaway agent + workspace archived.");
   await client.close();
   await relay.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
