@@ -46,6 +46,16 @@ export function getRoom(token: string): Room | undefined {
   return rooms.get(token);
 }
 
+export function listRooms(): Room[] {
+  return [...rooms.values()];
+}
+
+export function deleteRoom(token: string): boolean {
+  const existed = rooms.delete(token);
+  if (existed) persist();
+  return existed;
+}
+
 export function getAdminToken(): string {
   try {
     const token = fs.readFileSync(ADMIN_TOKEN_FILE, "utf8").trim();

@@ -78,9 +78,9 @@ async function main(): Promise<void> {
   // Prefer a small fast model for the test agent; fall back to the default.
   const { models } = await client.providers.listModels(PROVIDER as never);
   const model =
-    models.find((m: { id: string }) => m.id.includes("haiku")) ??
-    models.find((m: { isDefault?: boolean }) => m.isDefault) ??
-    models[0];
+    models!.find((m: { id: string }) => m.id.includes("haiku")) ??
+    models!.find((m: { isDefault?: boolean }) => m.isDefault) ??
+    models![0];
   console.log(`\ncreating throwaway agent (${PROVIDER}/${model.id})…`);
   const agent = await client.agents.create({
     config: { provider: `${PROVIDER}/${model.id}` } as never,
@@ -190,9 +190,45 @@ async function main(): Promise<void> {
     !JSON.stringify(await (await fetch(`${BASE_URL}/api/rooms/${token}`)).json()).includes(agent.id),
   );
 
-  // -- cleanup ---------------------------------------------------------------
+  // -- healthz -----------------------------------------------------------------
+  const health = await (await fetch(`${BASE_URL}/healthz`)).json();
+  check("healthz reports ok and daemon connected", health.ok === true && health.daemonConnected === true);
+
+  // -- rate limit --------------------------------------------------------------
+  console.log("\nexercising the rate limit (11 messages in quick succession)…");
+  let last429 = 0;
+  for (let i = 0; i < 11; i++) {
+    const r = await fetch(`${BASE_URL}/api/rooms/${token}/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: `rate limit probe ${i}`, name: "Rater" }),
+    });
+    last429 = r.status;
+  }
+  check("11th message within the window is rate limited (429)", last429 === 429);
+
+  // -- revocation ----------------------------------------------------------------
   a.ws.close();
   b.ws.close();
+
+  const revokeRoom = await openBrowser("R", token);
+  const revokeClosed = new Promise<boolean>((resolve) => {
+    revokeRoom.ws.on("close", () => resolve(true));
+    setTimeout(() => resolve(false), 10_000);
+  });
+
+  const revokeRes = await fetch(`${BASE_URL}/api/rooms/${token}`, {
+    method: "DELETE",
+    headers: { authorization: `Bearer ${adminToken}` },
+  });
+  check("revoke via admin API succeeds", revokeRes.status === 200);
+
+  check("revoked room's live socket is closed", await revokeClosed);
+
+  const afterRevoke = await fetch(`${BASE_URL}/api/rooms/${token}/history`);
+  check("revoked room 404s afterward", afterRevoke.status === 404);
+
+  // -- cleanup ---------------------------------------------------------------
   await agent.archive();
   console.log("\nthrowaway agent archived.");
   await client.close();

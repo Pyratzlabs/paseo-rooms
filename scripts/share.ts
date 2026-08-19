@@ -1,7 +1,9 @@
 /* Host-side helper: mint a share room for an existing agent.
    Usage:
      npm run share                 # list recent agents, then re-run with an id
-     npm run share -- <agent-id>   # id may be a unique prefix */
+     npm run share -- <agent-id>   # id may be a unique prefix
+     npm run share -- --list       # list active rooms
+     npm run share -- --revoke <token>   # revoke a room */
 import fs from "node:fs";
 import path from "node:path";
 import { getClient } from "../src/paseo.js";
@@ -10,8 +12,56 @@ const PORT = Number(process.env.PORT ?? 3000);
 const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
 const DATA_DIR = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
 
+function readAdminToken(): string {
+  return fs.readFileSync(path.join(DATA_DIR, "admin-token"), "utf8").trim();
+}
+
 async function main(): Promise<void> {
   const arg = process.argv[2];
+
+  if (arg === "--list") {
+    const adminToken = readAdminToken();
+    const res = await fetch(`${BASE_URL}/api/rooms`, {
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    if (!res.ok) {
+      console.error(`listing rooms failed (${res.status}):`, await res.text());
+      process.exit(1);
+    }
+    const { rooms } = (await res.json()) as {
+      rooms: Array<{ token: string; agentId: string; label: string; createdAt: string }>;
+    };
+    if (rooms.length === 0) {
+      console.log("no active rooms");
+      return;
+    }
+    console.log("Active rooms:\n");
+    for (const room of rooms) {
+      console.log(`  ${room.token}  ${room.label}  (created ${room.createdAt})`);
+      console.log(`    ${BASE_URL}/r/${room.token}`);
+    }
+    return;
+  }
+
+  if (arg === "--revoke") {
+    const token = process.argv[3];
+    if (!token) {
+      console.error("usage: npm run share -- --revoke <token>");
+      process.exit(1);
+    }
+    const adminToken = readAdminToken();
+    const res = await fetch(`${BASE_URL}/api/rooms/${token}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${adminToken}` },
+    });
+    if (!res.ok) {
+      console.error(`revoke failed (${res.status}):`, await res.text());
+      process.exit(1);
+    }
+    console.log(`revoked room ${token}`);
+    return;
+  }
+
   const client = await getClient();
 
   if (!arg) {
@@ -38,7 +88,7 @@ async function main(): Promise<void> {
   }
   const agent = matches[0].agent;
 
-  const adminToken = fs.readFileSync(path.join(DATA_DIR, "admin-token"), "utf8").trim();
+  const adminToken = readAdminToken();
   const res = await fetch(`${BASE_URL}/api/rooms`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${adminToken}` },

@@ -3,20 +3,40 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { createRoom, getAdminToken, getRoom, timingSafeEqual, type Room } from "./rooms.js";
+import { createRoom, deleteRoom, getAdminToken, getRoom, listRooms, timingSafeEqual, type Room } from "./rooms.js";
 import {
   agentInfo,
+  ensureConnected,
   fetchFullHistory,
-  getClient,
+  isConnected,
   sendToAgent,
   subscribeAgent,
 } from "./paseo.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
+const BASE_HOST = new URL(BASE_URL).host;
 const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
 
 const ADMIN_TOKEN = getAdminToken();
+
+// ---- rate limiting ----------------------------------------------------------
+
+const RATE_LIMIT = 10; // max messages per token per window
+const RATE_WINDOW_MS = 60_000;
+const messageTimestamps = new Map<string, number[]>();
+
+function checkRateLimit(token: string): boolean {
+  const now = Date.now();
+  const timestamps = (messageTimestamps.get(token) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (timestamps.length >= RATE_LIMIT) {
+    messageTimestamps.set(token, timestamps);
+    return false;
+  }
+  timestamps.push(now);
+  messageTimestamps.set(token, timestamps);
+  return true;
+}
 
 // ---- live fan-out ----------------------------------------------------------
 
@@ -26,6 +46,17 @@ interface LiveRoom {
 }
 
 const liveRooms = new Map<string, LiveRoom>();
+
+/** Close all live sockets for a room (used on revocation). */
+function closeLiveRoom(token: string): void {
+  const live = liveRooms.get(token);
+  if (!live) return;
+  for (const ws of live.sockets) {
+    ws.close(4004, "room revoked");
+  }
+  live.unsubscribe?.();
+  liveRooms.delete(token);
+}
 
 async function joinRoom(room: Room, socket: WebSocket): Promise<void> {
   let live = liveRooms.get(room.token);
@@ -97,20 +128,29 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "GET" && parts[0] === "r" && parts.length === 2) {
       return serveFile(res, "room.html", "text/html; charset=utf-8");
     }
-    if (req.method === "GET" && url.pathname === "/room.js") {
-      return serveFile(res, "room.js", "text/javascript; charset=utf-8");
-    }
     if (req.method === "GET" && url.pathname === "/") {
       return serveFile(res, "index.html", "text/html; charset=utf-8");
     }
 
-    // POST /api/rooms — admin only: create a share room for an agent
-    if (req.method === "POST" && url.pathname === "/api/rooms") {
+    // GET /healthz — liveness + daemon connectivity, unauthenticated
+    if (req.method === "GET" && url.pathname === "/healthz") {
+      return sendJson(res, 200, { ok: true, daemonConnected: isConnected() });
+    }
+
+    // Everything below talks to the daemon: fail fast while it's unreachable.
+    if (url.pathname.startsWith("/api/") && !isConnected()) {
+      return sendJson(res, 503, { error: "daemon unavailable" });
+    }
+
+    function checkAdmin(): boolean {
       const auth = req.headers.authorization ?? "";
       const bearer = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-      if (!timingSafeEqual(bearer, ADMIN_TOKEN)) {
-        return sendJson(res, 401, { error: "unauthorized" });
-      }
+      return timingSafeEqual(bearer, ADMIN_TOKEN);
+    }
+
+    // POST /api/rooms — admin only: create a share room for an agent
+    if (req.method === "POST" && url.pathname === "/api/rooms") {
+      if (!checkAdmin()) return sendJson(res, 401, { error: "unauthorized" });
       const body = JSON.parse((await readBody(req)) || "{}");
       const agentId = typeof body.agentId === "string" ? body.agentId : null;
       if (!agentId) return sendJson(res, 400, { error: "agentId required" });
@@ -118,6 +158,21 @@ const server = http.createServer(async (req, res) => {
       if (!info) return sendJson(res, 404, { error: "no such agent" });
       const room = createRoom(agentId, typeof body.label === "string" ? body.label : info.title ?? "Shared session");
       return sendJson(res, 201, { token: room.token, url: `${BASE_URL}/r/${room.token}` });
+    }
+
+    // GET /api/rooms — admin only: list rooms
+    if (req.method === "GET" && url.pathname === "/api/rooms") {
+      if (!checkAdmin()) return sendJson(res, 401, { error: "unauthorized" });
+      return sendJson(res, 200, { rooms: listRooms() });
+    }
+
+    // DELETE /api/rooms/<token> — admin only: revoke a room
+    if (req.method === "DELETE" && parts[0] === "api" && parts[1] === "rooms" && parts.length === 3) {
+      if (!checkAdmin()) return sendJson(res, 401, { error: "unauthorized" });
+      const existed = deleteRoom(parts[2]);
+      if (!existed) return sendJson(res, 404, { error: "unknown room" });
+      closeLiveRoom(parts[2]);
+      return sendJson(res, 200, { ok: true });
     }
 
     // /api/rooms/<token>[/...] — collaborator endpoints, gated on the room token
@@ -141,6 +196,7 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (req.method === "POST" && rest === "messages") {
+        if (!checkRateLimit(room.token)) return sendJson(res, 429, { error: "rate limit exceeded" });
         const body = JSON.parse((await readBody(req)) || "{}");
         const message = typeof body.message === "string" ? body.message.trim() : "";
         if (!message) return sendJson(res, 400, { error: "message required" });
@@ -162,6 +218,25 @@ const server = http.createServer(async (req, res) => {
 // WS /api/rooms/<token>/ws — live timeline fan-out
 const wss = new WebSocketServer({ noServer: true });
 server.on("upgrade", (req, socket, head) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    try {
+      if (new URL(origin).host !== BASE_HOST) {
+        socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+    } catch {
+      socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+  }
+  if (!isConnected()) {
+    socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n");
+    socket.destroy();
+    return;
+  }
   const url = new URL(req.url ?? "/", BASE_URL);
   const match = url.pathname.match(/^\/api\/rooms\/([^/]+)\/ws$/);
   const room = match ? getRoom(match[1]) : undefined;
@@ -175,14 +250,13 @@ server.on("upgrade", (req, socket, head) => {
   });
 });
 
-getClient()
-  .then(() => {
-    server.listen(PORT, () => {
-      console.log(`paseo-rooms listening on ${BASE_URL}`);
-      console.log(`admin token: data/admin-token (create rooms with "npm run share -- <agent-id>")`);
-    });
-  })
-  .catch((err) => {
-    console.error("could not connect to Paseo daemon:", err.message);
-    process.exit(1);
-  });
+// Boot resilience: start the HTTP listener immediately so /healthz and
+// static routes work even if the daemon is down; connect (with retry) in the
+// background. API routes respond 503 until connected.
+server.listen(PORT, () => {
+  console.log(`paseo-rooms listening on ${BASE_URL}`);
+  console.log(`admin token: data/admin-token (create rooms with "npm run share -- <agent-id>")`);
+});
+ensureConnected().then(() => {
+  console.log("connected to Paseo daemon");
+});

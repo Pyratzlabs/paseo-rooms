@@ -9,17 +9,61 @@ const PASEO_URL = process.env.PASEO_URL ?? "ws://127.0.0.1:6767/ws";
 const PASEO_PASSWORD = process.env.PASEO_PASSWORD;
 
 let client: PaseoClient | null = null;
+let connecting: Promise<PaseoClient> | null = null;
 
-export async function getClient(): Promise<PaseoClient> {
-  if (!client) {
-    client = createPaseoClient({
-      url: PASEO_URL,
-      password: PASEO_PASSWORD,
-      reconnect: { enabled: true },
-    });
-    await client.connect();
+/** True once the daemon connection has been established at least once. */
+export function isConnected(): boolean {
+  return client !== null;
+}
+
+async function connect(): Promise<PaseoClient> {
+  const c = createPaseoClient({
+    url: PASEO_URL,
+    password: PASEO_PASSWORD,
+    reconnect: { enabled: true },
+  });
+  await c.connect();
+  return c;
+}
+
+/**
+ * Connect to the daemon, retrying forever with backoff in the background if
+ * it's unreachable. Never throws; resolves once connected. Safe to call
+ * repeatedly (e.g. from a boot loop) — concurrent callers share one attempt.
+ */
+export async function ensureConnected(): Promise<PaseoClient> {
+  if (client) return client;
+  if (!connecting) {
+    connecting = (async () => {
+      let delay = 1000;
+      for (;;) {
+        try {
+          const c = await connect();
+          client = c;
+          connecting = null;
+          return c;
+        } catch (err) {
+          console.error(
+            `could not connect to Paseo daemon (retrying in ${Math.round(delay / 1000)}s):`,
+            err instanceof Error ? err.message : err,
+          );
+          await new Promise((r) => setTimeout(r, delay));
+          delay = Math.min(delay * 2, 30_000);
+        }
+      }
+    })();
   }
-  return client;
+  return connecting;
+}
+
+/** Get the client, connecting (and blocking the caller) if needed. Used by
+ * scripts (share.ts, e2e.ts) that want the old throw-on-failure behavior. */
+export async function getClient(): Promise<PaseoClient> {
+  if (client) return client;
+  return connect().then((c) => {
+    client = c;
+    return c;
+  });
 }
 
 const handles = new Map<string, PaseoAgentHandle>();
