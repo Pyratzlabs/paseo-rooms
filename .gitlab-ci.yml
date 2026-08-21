@@ -1,0 +1,44 @@
+# GitLab CI: typecheck + relay protocol tests on every push; SSH deploy of the
+# relay on main when the deploy variables are configured.
+#
+# Required CI/CD variables for the deploy job (Settings -> CI/CD -> Variables):
+#   DEPLOY_SSH_PRIVATE_KEY  (type: file or variable) key for the deploy user
+#   DEPLOY_SSH_TARGET       e.g. deployer@192.168.100.119
+#   RELAY_KEY               shared secret between relay and laptop room servers
+#   ROOMS_DOMAIN            optional; when set, deploy.sh uses Caddy auto-TLS,
+#                           otherwise the LAN compose file (plain :8080) is used
+# Without these variables the deploy job simply doesn't appear in the pipeline.
+#
+# The daemon-dependent suites (e2e, e2e:relay) need a live Paseo daemon and are
+# not runnable in CI; run them locally.
+
+stages: [test, deploy]
+
+test:
+  stage: test
+  image: node:22-alpine
+  script:
+    - npm ci --no-audit --no-fund
+    - npm run typecheck
+    - npm run test:relay
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+
+deploy:
+  stage: deploy
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache openssh-client rsync bash
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+    - printf 'Host *\n  StrictHostKeyChecking accept-new\n  IdentityFile ~/.ssh/id_deploy\n' > ~/.ssh/config
+  script:
+    - |
+      rsync -az --delete deploy/ src/relay/ --relative "$DEPLOY_SSH_TARGET":paseo-rooms-deploy/
+      if [ -n "${ROOMS_DOMAIN:-}" ]; then
+        ssh "$DEPLOY_SSH_TARGET" "cd paseo-rooms-deploy/deploy && printf 'RELAY_KEY=%s\nROOMS_DOMAIN=%s\n' '$RELAY_KEY' '$ROOMS_DOMAIN' > .env && docker compose -f compose.yml build && docker compose -f compose.yml up -d"
+      else
+        ssh "$DEPLOY_SSH_TARGET" "cd paseo-rooms-deploy/deploy && printf 'RELAY_KEY=%s\n' '$RELAY_KEY' > .env && docker compose -f compose.lan.yml build && docker compose -f compose.lan.yml up -d"
+      fi
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main" && $DEPLOY_SSH_TARGET && $DEPLOY_SSH_PRIVATE_KEY && $RELAY_KEY

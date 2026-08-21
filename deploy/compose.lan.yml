@@ -1,0 +1,19 @@
+# LAN/testing deployment: relay only, plain HTTP on :8080, no Caddy/TLS.
+# Use when the host has no public domain (e.g. an internal VM) — Let's Encrypt
+# cannot issue certificates for private IPs. For internet-facing deployments
+# use compose.yml (relay + Caddy auto-TLS) instead.
+#
+#   RELAY_KEY=... docker compose -f compose.lan.yml up -d
+#
+# Laptop side then dials: RELAY_URL=ws://<vm-ip>:8080/host RELAY_KEY=... npm start
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.relay
+    environment:
+      RELAY_KEY: ${RELAY_KEY:?RELAY_KEY is required}
+      RELAY_PORT: "8080"
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
