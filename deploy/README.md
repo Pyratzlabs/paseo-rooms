@@ -63,22 +63,29 @@ every room create/revoke, and reconnects with backoff if the relay restarts.
 See `deploy/paseo-rooms.service` for an example systemd **user** unit that
 keeps this running in the background.
 
-## Continuous deploy (GitHub Actions)
+## Continuous deploy (GitLab CI)
 
-`.github/workflows/deploy.yml` deploys on every push to `main` by SSHing into
-the VPS and running `deploy/deploy.sh`. It's a no-op (green, with a notice —
-not a failure) until these repository secrets are set:
+`.gitlab-ci.yml` type-checks and runs relay protocol tests on every push. On
+`main`, it deploys the LAN relay using the project runner tagged
+`paseo-rooms`. Configure these GitLab **Settings -> CI/CD -> Variables**:
 
-- `SSH_PRIVATE_KEY` — private key for a deploy user on the VPS (the matching
-  public key must be in that user's `~/.ssh/authorized_keys`; the deploy user
-  needs passwordless `docker` access, e.g. membership in the `docker` group)
-- `SSH_TARGET` — e.g. `deploy@vps.example.com`
-- `ROOMS_DOMAIN` — e.g. `rooms.example.com`
-- `RELAY_KEY` — the shared secret (same value laptops use)
+- `DEPLOY_SSH_PRIVATE_KEY` — dedicated deploy key, preferably a *File* type
+  variable. Add its public key to the deployment user's `authorized_keys`.
+- `DEPLOY_SSH_KNOWN_HOSTS` — the target's pinned SSH host key(s), preferably a
+  *File* type variable (obtain with `ssh-keyscan -H <host>` from a trusted
+  network).
+- `DEPLOY_SSH_TARGET` — e.g. `deployer@192.168.193.100`.
+- `RELAY_KEY` — the shared relay secret, masked.
+- `DEPLOY_REMOTE_DIR` — optional; defaults to `/home/deployer/paseo-rooms`.
 
-Add them under **Settings -> Secrets and variables -> Actions** in the GitHub
-repo. Until they're all set, the workflow run shows a "Skipping deploy"
-notice and succeeds.
+The deploy job is omitted until all required variables are present. It updates
+the same directory as the running relay, keeps `.env` out of rsync deletion,
+rebuilds the LAN compose stack, and confirms that the local relay responds.
+
+The current host already uses nginx-proxy on ports 80/443. The CI deployment
+therefore intentionally uses `compose.lan.yml` and port 8080; do not set
+`ROOMS_DOMAIN` or run the Caddy compose stack on that host unless the proxy
+setup is migrated first.
 
 ## Health check
 

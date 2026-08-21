@@ -1,12 +1,14 @@
 # GitLab CI: typecheck + relay protocol tests on every push; SSH deploy of the
-# relay on main when the deploy variables are configured.
+# LAN relay on main when the deploy variables are configured.
 #
 # Required CI/CD variables for the deploy job (Settings -> CI/CD -> Variables):
-#   DEPLOY_SSH_PRIVATE_KEY  (type: file or variable) key for the deploy user
-#   DEPLOY_SSH_TARGET       e.g. deployer@192.168.100.119
+#   DEPLOY_SSH_PRIVATE_KEY  file variable (or regular variable) holding the
+#                           dedicated deploy key
+#   DEPLOY_SSH_KNOWN_HOSTS  pinned SSH host key(s), preferably a file variable
+#   DEPLOY_SSH_TARGET       deployer@192.168.193.100
 #   RELAY_KEY               shared secret between relay and laptop room servers
-#   ROOMS_DOMAIN            optional; when set, deploy.sh uses Caddy auto-TLS,
-#                           otherwise the LAN compose file (plain :8080) is used
+# Optional:
+#   DEPLOY_REMOTE_DIR       defaults to /home/deployer/paseo-rooms
 # Without these variables the deploy job simply doesn't appear in the pipeline.
 #
 # The daemon-dependent suites (e2e, e2e:relay) need a live Paseo daemon and are
@@ -17,28 +19,46 @@ stages: [test, deploy]
 test:
   stage: test
   image: node:22-alpine
+  tags:
+    - paseo-rooms
   script:
     - npm ci --no-audit --no-fund
     - npm run typecheck
     - npm run test:relay
+    - npm run test:ci
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
 
 deploy:
   stage: deploy
   image: alpine:3.20
+  tags:
+    - paseo-rooms
   before_script:
     - apk add --no-cache openssh-client rsync bash
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
-    - printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
-    - printf 'Host *\n  StrictHostKeyChecking accept-new\n  IdentityFile ~/.ssh/id_deploy\n' > ~/.ssh/config
+    - |
+      if [ -f "$DEPLOY_SSH_PRIVATE_KEY" ]; then
+        cp "$DEPLOY_SSH_PRIVATE_KEY" ~/.ssh/id_deploy
+      else
+        printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
+      fi
+      chmod 600 ~/.ssh/id_deploy
+    - |
+      if [ -f "$DEPLOY_SSH_KNOWN_HOSTS" ]; then
+        cp "$DEPLOY_SSH_KNOWN_HOSTS" ~/.ssh/known_hosts
+      else
+        printf '%s\n' "$DEPLOY_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+      fi
+      chmod 600 ~/.ssh/known_hosts
+    - printf 'Host *\n  IdentitiesOnly yes\n  IdentityFile ~/.ssh/id_deploy\n' > ~/.ssh/config
   script:
     - |
-      rsync -az --delete deploy/ src/relay/ --relative "$DEPLOY_SSH_TARGET":paseo-rooms-deploy/
-      if [ -n "${ROOMS_DOMAIN:-}" ]; then
-        ssh "$DEPLOY_SSH_TARGET" "cd paseo-rooms-deploy/deploy && printf 'RELAY_KEY=%s\nROOMS_DOMAIN=%s\n' '$RELAY_KEY' '$ROOMS_DOMAIN' > .env && docker compose -f compose.yml build && docker compose -f compose.yml up -d"
-      else
-        ssh "$DEPLOY_SSH_TARGET" "cd paseo-rooms-deploy/deploy && printf 'RELAY_KEY=%s\n' '$RELAY_KEY' > .env && docker compose -f compose.lan.yml build && docker compose -f compose.lan.yml up -d"
-      fi
+      DEPLOY_DIR="${DEPLOY_REMOTE_DIR:-/home/deployer/paseo-rooms}"
+      RELAY_ENV_B64="$(printf 'RELAY_KEY=%s\n' "$RELAY_KEY" | base64 | tr -d '\n')"
+      ssh "$DEPLOY_SSH_TARGET" "mkdir -p '$DEPLOY_DIR/deploy' '$DEPLOY_DIR/src/relay'"
+      rsync -az --delete --exclude .env deploy/ src/relay/ --relative \
+        "$DEPLOY_SSH_TARGET":"$DEPLOY_DIR/"
+      ssh "$DEPLOY_SSH_TARGET" "printf '%s' '$RELAY_ENV_B64' | base64 -d > '$DEPLOY_DIR/deploy/.env' && chmod 600 '$DEPLOY_DIR/deploy/.env' && cd '$DEPLOY_DIR/deploy' && docker compose --env-file .env -f compose.lan.yml up -d --build && curl -fsS http://127.0.0.1:8080/ >/dev/null"
   rules:
-    - if: $CI_COMMIT_BRANCH == "main" && $DEPLOY_SSH_TARGET && $DEPLOY_SSH_PRIVATE_KEY && $RELAY_KEY
+    - if: $CI_COMMIT_BRANCH == "main" && $DEPLOY_SSH_TARGET && $DEPLOY_SSH_PRIVATE_KEY && $DEPLOY_SSH_KNOWN_HOSTS && $RELAY_KEY

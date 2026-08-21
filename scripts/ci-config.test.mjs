@@ -10,7 +10,7 @@ test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
   for (const job of jobs) {
     assert.match(
       config,
-      new RegExp(`^${job}:\\n(?:.|\\n)*?^  tags:\\n  - paseo-rooms$`, "m"),
+      new RegExp(`^${job}:\\n[\\s\\S]*?^  tags:\\n    - paseo-rooms$`, "m"),
       `${job} must be tagged for the dedicated runner`,
     );
   }
