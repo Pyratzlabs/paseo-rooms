@@ -26,3 +26,7 @@ test("SSH host identity is pinned through a CI variable", () => {
   assert.match(config, /DEPLOY_SSH_KNOWN_HOSTS/);
   assert.doesNotMatch(config, /StrictHostKeyChecking accept-new/);
 });
+
+test("file-based SSH keys retain a trailing newline", () => {
+  assert.match(config, /printf '\\n' >> ~\/\.ssh\/id_deploy/);
+});
