@@ -19,6 +19,7 @@ test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
 test("the LAN deploy reconciles the live deployment and verifies it", () => {
   assert.match(config, /DEPLOY_REMOTE_DIR:-\/home\/deployer\/paseo-rooms/);
   assert.match(config, /compose\.lan\.yml up -d --build/);
+  assert.match(config, /for attempt in \$\(seq 1 15\)/);
   assert.match(config, /curl -fsS http:\/\/127\.0\.0\.1:8080\//);
 });
 
