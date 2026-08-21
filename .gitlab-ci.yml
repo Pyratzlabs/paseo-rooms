@@ -44,6 +44,7 @@ deploy:
       else
         printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > ~/.ssh/id_deploy
       fi
+      printf '\n' >> ~/.ssh/id_deploy
       chmod 600 ~/.ssh/id_deploy
     - |
       if [ -f "$DEPLOY_SSH_KNOWN_HOSTS" ]; then
