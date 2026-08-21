@@ -26,6 +26,7 @@ test:
     - npm run typecheck
     - npm run test:relay
     - npm run test:ci
+    - npm run test:lock
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
 
