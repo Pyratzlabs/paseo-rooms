@@ -1,0 +1,29 @@
+# Public deployment behind the host's existing nginx-proxy + acme-companion
+# (network "web"): TLS is automatic via VIRTUAL_HOST/LETSENCRYPT_HOST. Used by
+# CI when ROOMS_DOMAIN is set; compose.lan.yml remains for proxy-less hosts.
+#
+#   RELAY_KEY=... ROOMS_DOMAIN=paseo-rooms.example.com \
+#     docker compose -f compose.proxy.yml up -d
+#
+# Laptop side then dials: RELAY_URL=wss://$ROOMS_DOMAIN/host RELAY_KEY=...
+# The :8080 port stays published so existing LAN/ZeroTier links keep working.
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.relay
+    environment:
+      RELAY_KEY: ${RELAY_KEY:?RELAY_KEY is required}
+      RELAY_PORT: "8080"
+      VIRTUAL_HOST: ${ROOMS_DOMAIN:?ROOMS_DOMAIN is required}
+      VIRTUAL_PORT: "8080"
+      LETSENCRYPT_HOST: ${ROOMS_DOMAIN}
+    ports:
+      - "8080:8080"
+    networks:
+      - web
+    restart: unless-stopped
+
+networks:
+  web:
+    external: true
