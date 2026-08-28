@@ -138,7 +138,10 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
           if (!browser) return;
           if (frame.event === "message") {
             if (browser.readyState === WebSocket.OPEN && frame.dataB64 !== undefined) {
-              browser.send(Buffer.from(frame.dataB64, "base64"));
+              // RoomSocket.send accepts JSON text. Passing a Buffer here turns
+              // it into a binary WebSocket frame, which browsers expose as a
+              // Blob rather than the string expected by the room renderer.
+              browser.send(Buffer.from(frame.dataB64, "base64").toString("utf8"));
             }
           } else if (frame.event === "close") {
             host.browsers.delete(frame.id);

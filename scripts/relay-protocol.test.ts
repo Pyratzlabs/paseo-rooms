@@ -138,11 +138,15 @@ function openBrowserWs(token: string): Promise<WebSocket> {
 }
 
 function nextMessage(ws: WebSocket, timeoutMs = 3000): Promise<string> {
+  return nextFrame(ws, timeoutMs).then((frame) => frame.data);
+}
+
+function nextFrame(ws: WebSocket, timeoutMs = 3000): Promise<{ data: string; isBinary: boolean }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("timed out waiting for ws message")), timeoutMs);
-    ws.once("message", (data) => {
+    ws.once("message", (data, isBinary) => {
       clearTimeout(timer);
-      resolve(data.toString());
+      resolve({ data: data.toString(), isBinary });
     });
   });
 }
@@ -219,7 +223,9 @@ test("ws relay in both directions", async () => {
 
   // browser -> laptop -> browser
   browser.send("hello");
-  assert.equal(await nextMessage(browser), "echo:hello");
+  const echo = await nextFrame(browser);
+  assert.equal(echo.data, "echo:hello");
+  assert.equal(echo.isBinary, false, "room updates must reach browsers as text frames");
 
   // laptop -> browser unprompted
   laptop.echoWs = false;
