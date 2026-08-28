@@ -266,7 +266,12 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
     // GET /api/rooms — admin only: list rooms
     if (req.method === "GET" && url.pathname === "/api/rooms") {
       if (!checkAdmin()) return json(401, { error: "unauthorized" });
-      return json(200, { rooms: listRooms() });
+      return json(200, {
+        rooms: listRooms().map((room) => ({
+          ...room,
+          url: `${BASE_URL}/r/${room.token}`,
+        })),
+      });
     }
 
     // DELETE /api/rooms/<token> — admin only: revoke a room
