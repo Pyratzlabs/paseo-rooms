@@ -49,5 +49,6 @@ test("the React room uses Paseo-aligned semantic tokens and responsive layout", 
     assert.match(styles, new RegExp(token));
   }
   assert.match(styles, /@media \(max-width: 700px\)/);
+  assert.match(styles, /grid-template-columns: minmax\(0, 1fr\) auto/);
   assert.match(styles, /prefers-color-scheme: dark/);
 });
