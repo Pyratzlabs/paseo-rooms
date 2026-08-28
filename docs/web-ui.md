@@ -17,11 +17,11 @@ should feel like a focused shared conversation rather than a debug event feed.
 
 ## Users and permissions
 
-| Person | Can do | Cannot do |
-| --- | --- | --- |
-| Host | Creates/revokes a room locally; approves Paseo permissions in Paseo | Delegate daemon access through the room |
-| Collaborator | Read the room timeline; send attributed messages | Choose an agent, approve permissions, browse the daemon, create/revoke rooms |
-| Agent | Receives messages on its canonical Paseo timeline | Learn a browser's identity beyond the supplied display name |
+| Person       | Can do                                                              | Cannot do                                                                    |
+| ------------ | ------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Host         | Creates/revokes a room locally; approves Paseo permissions in Paseo | Delegate daemon access through the room                                      |
+| Collaborator | Read the room timeline; send attributed messages                    | Choose an agent, approve permissions, browse the daemon, create/revoke rooms |
+| Agent        | Receives messages on its canonical Paseo timeline                   | Learn a browser's identity beyond the supplied display name                  |
 
 The URL is a bearer capability. The UI should say this plainly in a compact
 room-information affordance, without making the page feel alarming.
@@ -38,17 +38,17 @@ room-information affordance, without making the page feel alarming.
 
 ## Timeline presentation
 
-| Paseo item/event | First-release presentation |
-| --- | --- |
-| `user_message` | Right-aligned message card with a participant name. Preserve the existing `[Name]` convention, but never show the prefix as message body. |
-| `assistant_message` | Left-aligned Markdown message card. Consecutive live pieces append to one open card. |
-| `reasoning` | Collapsed "Thinking" disclosure by default; show plain text when expanded. |
-| `tool_call` | Compact, collapsible activity row: tool name, outcome/status, and elapsed/updated state where available. Do not dump raw tool input/output by default. |
-| `todo` | Compact checklist card, replacing the previous checklist state rather than creating visual noise. |
-| `turn_started` / terminal turn events | One working indicator; failure/cancellation adds a concise timeline notice. |
-| `permission_requested`, `kind: "question"` | First-class decision card with the safe action labels supplied by Paseo. A collaborator can select exactly one. |
-| other `permission_requested` kinds | Prominent non-actionable notice: "The host must respond in Paseo." |
-| unknown future item | Safe, quiet generic activity row; never fail the whole renderer. |
+| Paseo item/event                           | First-release presentation                                                                                                                             |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `user_message`                             | Right-aligned message card with a participant name. Preserve the existing `[Name]` convention, but never show the prefix as message body.              |
+| `assistant_message`                        | Left-aligned Markdown message card. Consecutive live pieces append to one open card.                                                                   |
+| `reasoning`                                | Collapsed "Thinking" disclosure by default; show plain text when expanded.                                                                             |
+| `tool_call`                                | Compact, collapsible activity row: tool name, outcome/status, and elapsed/updated state where available. Do not dump raw tool input/output by default. |
+| `todo`                                     | Compact checklist card, replacing the previous checklist state rather than creating visual noise.                                                      |
+| `turn_started` / terminal turn events      | One working indicator; failure/cancellation adds a concise timeline notice.                                                                            |
+| `permission_requested`, `kind: "question"` | First-class decision card. Render safe top-level actions when present, or structured `AskUserQuestion` prompts with choices and an Other field.        |
+| other `permission_requested` kinds         | Prominent non-actionable notice: "The host must respond in Paseo."                                                                                     |
+| unknown future item                        | Safe, quiet generic activity row; never fail the whole renderer.                                                                                       |
 
 Markdown must be rendered from a safe, allowlisted subset. Raw HTML, script
 URLs, and untrusted link schemes are never rendered. External links open in a
@@ -57,13 +57,17 @@ new tab with `noopener noreferrer`.
 ## Agent questions and plan-mode decisions
 
 Paseo models an interactive question as a structured pending permission request
-with `kind: "question"`, a request ID, optional title/description, and a
-whitelisted set of actions. It is not reliable to infer choices from Markdown
-bullets. A room must therefore render this protocol data as a **decision card**
-rather than attempting to parse assistant prose.
+with `kind: "question"`. Some providers expose a whitelisted action set;
+Claude Plan Mode's `AskUserQuestion` instead carries one or more prompts in
+`input.questions`, each with choices and optional multi-select behavior. It is
+not reliable to infer choices from Markdown bullets. A room must therefore
+render this protocol data as a **decision card** rather than attempting to parse
+assistant prose.
 
-- Show the agent's title/description and the supplied action labels; do not
-  expose arbitrary `input`, `detail`, or metadata fields.
+- Show the agent's title/description and supplied action labels, or project
+  only the safe question text, headers, option labels/descriptions, and Other
+  capability from `AskUserQuestion`. Do not expose arbitrary `input`, `detail`,
+  or metadata fields.
 - A decision is disabled after one submission and resolves in the timeline as
   answered, superseded, or unavailable.
 - On reconnect or page load, show still-pending questions from the
@@ -85,9 +89,13 @@ The server must resolve a question only after all of these checks:
 
 1. The room token maps to the agent that owns the pending request.
 2. The request is still pending and its kind is exactly `question`.
-3. The submitted action ID occurs in that request's current action set.
-4. The response is an allow response with that selected action ID; the browser
-   cannot supply arbitrary permissions, metadata, or a different agent ID.
+3. A submitted action ID occurs in that request's current action set, or every
+   submitted plan-question choice occurs in the current prompt at its submitted
+   index.
+4. The response is an allow response with that selected action ID, or a
+   server-rebuilt `updatedInput` containing the original `AskUserQuestion`
+   input and validated answers. The browser cannot supply arbitrary tool input,
+   permissions, metadata, or a different agent ID.
 
 The browser receives a small question DTO, not raw Paseo permission objects.
 The endpoint needs an idempotency/concurrency policy: the first successful
@@ -148,25 +156,24 @@ Use this as the initial CSS token set, derived from Paseo's default themes.
 It is deliberately semantic so future tuning does not require repainting every
 component.
 
-| Token | Light | Dark | Use |
-| --- | --- | --- | --- |
-| `--surface-0` | `#ffffff` | `#181B1A` | page and primary conversation canvas |
-| `--surface-1` | `#fafafa` | `#1E2120` | subtle raised/hover surface |
-| `--surface-2` | `#f4f4f5` | `#272A29` | input and quiet cards |
-| `--surface-sidebar` | `#f4f4f5` | `#141716` | optional room-details rail only |
-| `--text` | `#1a1a1e` | `#fafafa` | primary prose |
-| `--text-muted` | `#71717a` | `#A1A5A4` | metadata and inactive utility text |
-| `--text-extra-muted` | `#a1a1aa` | `#717574` | timestamps and de-emphasized detail |
-| `--border` | `#e4e4e7` | `#252B2A` | dividers and input edges |
-| `--accent` | `#20744A` | `#20744A` | selected/affirmative interaction |
-| `--accent-bright` | `#239956` | `#7ccba0` | hover/focus and live emphasis |
-| `--danger` | `#b04138` | `#c64f43` | destructive/failure state only |
+| Token                | Light     | Dark      | Use                                  |
+| -------------------- | --------- | --------- | ------------------------------------ |
+| `--surface-0`        | `#ffffff` | `#181B1A` | page and primary conversation canvas |
+| `--surface-1`        | `#fafafa` | `#1E2120` | subtle raised/hover surface          |
+| `--surface-2`        | `#f4f4f5` | `#272A29` | input and quiet cards                |
+| `--surface-sidebar`  | `#f4f4f5` | `#141716` | optional room-details rail only      |
+| `--text`             | `#1a1a1e` | `#fafafa` | primary prose                        |
+| `--text-muted`       | `#71717a` | `#A1A5A4` | metadata and inactive utility text   |
+| `--text-extra-muted` | `#a1a1aa` | `#717574` | timestamps and de-emphasized detail  |
+| `--border`           | `#e4e4e7` | `#252B2A` | dividers and input edges             |
+| `--accent`           | `#20744A` | `#20744A` | selected/affirmative interaction     |
+| `--accent-bright`    | `#239956` | `#7ccba0` | hover/focus and live emphasis        |
+| `--danger`           | `#b04138` | `#c64f43` | destructive/failure state only       |
 
 Use the system UI stack (`system-ui, -apple-system, BlinkMacSystemFont,
 "Segoe UI", Roboto, Helvetica, Arial, sans-serif`) and a conventional
 monospace stack for code. The base reading size is 15px; compact metadata is
-12px; standard UI labels are 14px. The rhythm is a 4px grid: 4, 8, 12, 16, 24,
-32. Border radii remain small: 4px controls, 6–8px cards, 12px only for large
+12px; standard UI labels are 14px. The rhythm is a 4px grid: 4, 8, 12, 16, 24, 32. Border radii remain small: 4px controls, 6–8px cards, 12px only for large
 grouped surfaces. Shadows are exceptional—use borders and surface steps first.
 
 ### Composition

@@ -2,12 +2,34 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const page = await readFile(new URL("../public/room.html", import.meta.url), "utf8");
-const app = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
-const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
-const timeline = await readFile(new URL("../web/src/timeline.ts", import.meta.url), "utf8");
-const nameGate = await readFile(new URL("../web/src/components/NameGate.tsx", import.meta.url), "utf8");
-const participants = await readFile(new URL("../web/src/components/Participants.tsx", import.meta.url), "utf8");
+const page = await readFile(
+  new URL("../public/room.html", import.meta.url),
+  "utf8",
+);
+const app = await readFile(
+  new URL("../web/src/App.tsx", import.meta.url),
+  "utf8",
+);
+const styles = await readFile(
+  new URL("../web/src/styles.css", import.meta.url),
+  "utf8",
+);
+const timeline = await readFile(
+  new URL("../web/src/timeline.ts", import.meta.url),
+  "utf8",
+);
+const nameGate = await readFile(
+  new URL("../web/src/components/NameGate.tsx", import.meta.url),
+  "utf8",
+);
+const participants = await readFile(
+  new URL("../web/src/components/Participants.tsx", import.meta.url),
+  "utf8",
+);
+const timelineComponent = await readFile(
+  new URL("../web/src/components/Timeline.tsx", import.meta.url),
+  "utf8",
+);
 
 test("the public room is a Vite entry with token-scoped relative assets", () => {
   assert.match(page, /<div id="root"><\/div>/);
@@ -27,7 +49,10 @@ test("the React room keeps live, error, question, and composer behavior", () => 
 });
 
 test("the React room gates live participation on a name and renders presence", () => {
-  assert.match(app, /socket\?\.send\(JSON\.stringify\(\{ type: "hello", name \}\)\)/);
+  assert.match(
+    app,
+    /socket\?\.send\(JSON\.stringify\(\{ type: "hello", name \}\)\)/,
+  );
   assert.match(app, /frame\.type === "presence"/);
   assert.match(app, /<NameGate/);
   assert.match(app, /<Participants/);
@@ -44,8 +69,24 @@ test("the React room follows new activity without stealing an older reader's scr
   assert.match(app, /scrollToLatest\(true\)/);
 });
 
+test("the React room renders and submits structured plan-mode questions", () => {
+  assert.match(app, /api\.answerPrompts/);
+  assert.match(timelineComponent, /PromptQuestions/);
+  assert.match(timelineComponent, /Submit answers/);
+  assert.match(timelineComponent, /prompt-tabs/);
+  assert.match(timelineComponent, />\s*Next\s*</);
+  assert.match(timelineComponent, /Other\.\.\./);
+  assert.match(timelineComponent, /checkbox/);
+});
+
 test("the React room uses Paseo-aligned semantic tokens and responsive layout", () => {
-  for (const token of ["--surface-0", "--surface-2", "--text-muted", "--accent", "--border"]) {
+  for (const token of [
+    "--surface-0",
+    "--surface-2",
+    "--text-muted",
+    "--accent",
+    "--border",
+  ]) {
     assert.match(styles, new RegExp(token));
   }
   assert.match(styles, /@media \(max-width: 700px\)/);
