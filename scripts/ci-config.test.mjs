@@ -2,8 +2,13 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const config = await readFile(new URL("../.gitlab-ci.yml", import.meta.url), "utf8");
-const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+const config = await readFile(
+  new URL("../.gitlab-ci.yml", import.meta.url),
+  "utf8",
+);
+const packageJson = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+);
 
 test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
   const jobs = ["test", "deploy"];
@@ -48,8 +53,15 @@ test("the test job verifies formatting, linting, both TypeScript projects, the w
     "npm run test:questions",
     "npm run test:public-events",
   ]) {
-    assert.match(config, new RegExp(`^    - ${command.replace(/[:]/g, "\\:")}$`, "m"), `CI must run ${command}`);
+    assert.match(
+      config,
+      new RegExp(`^    - ${command.replace(/[:]/g, "\\:")}$`, "m"),
+      `CI must run ${command}`,
+    );
   }
-  assert.equal(packageJson.scripts["format:check"], "prettier --check .");
-  assert.equal(packageJson.scripts.lint, "eslint .");
+  assert.equal(
+    packageJson.scripts["format:check"],
+    "prettier --check .gitlab-ci.yml eslint.config.js package.json scripts/ci-config.test.mjs web",
+  );
+  assert.equal(packageJson.scripts.lint, "eslint web eslint.config.js");
 });
