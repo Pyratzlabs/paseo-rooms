@@ -1,4 +1,4 @@
-import type { StreamEvent, TimelineItem } from "./api";
+import type { StreamEvent, TimelineItem } from "./api.js";
 
 export type DisplayItem =
   | { id: string; kind: "user" | "assistant"; text: string; author?: string }
@@ -12,8 +12,12 @@ export type DisplayItem =
 
 const collaborator = /^\[([^\]\n]{1,40})\]\n([\s\S]*)$/;
 
+function text(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 function id(index: number, item: TimelineItem): string {
-  return `${index}:${item.type}:${item.text ?? item.message ?? item.name ?? ""}`;
+  return `${index}:${item.type}:${text(item.text) || text(item.message) || text(item.name)}`;
 }
 
 export function projectTimeline(
@@ -27,25 +31,25 @@ export function projectTimeline(
     const key = id(index++, item);
     switch (item.type) {
       case "user_message": {
-        const text = item.text ?? "";
-        const match = text.match(collaborator);
+        const value = text(item.text);
+        const match = value.match(collaborator);
         output.push({
           id: key,
           kind: "user",
-          text: match?.[2] ?? text,
+          text: match?.[2] ?? value,
           author: match?.[1] ?? "Host",
         });
         break;
       }
       case "assistant_message":
-        output.push({ id: key, kind: "assistant", text: item.text ?? "" });
+        output.push({ id: key, kind: "assistant", text: text(item.text) });
         break;
       case "reasoning":
         output.push({
           id: key,
           kind: "reasoning",
           label: "Thinking",
-          detail: item.text ?? "",
+          detail: text(item.text),
         });
         break;
       case "tool_call":
@@ -60,10 +64,16 @@ export function projectTimeline(
           id: key,
           kind: "todo",
           label: "Plan",
-          todos: (item.items ?? []).map((todo) => ({
-            text: todo.text ?? "Untitled task",
-            done: todo.completed === true || todo.status === "completed",
-          })),
+          todos: (Array.isArray(item.items) ? item.items : []).map(
+            (todo: {
+              text?: string;
+              completed?: boolean;
+              status?: string;
+            }) => ({
+              text: todo.text ?? "Untitled task",
+              done: todo.completed === true || todo.status === "completed",
+            }),
+          ),
         });
         break;
       case "error":
