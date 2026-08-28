@@ -12,7 +12,8 @@ This monorepo keeps the deployed relay/web application and the companion Paseo
 desktop plugin versioned and verified together:
 
 - [`apps/relay-web`](apps/relay-web) — local room server, public relay, and
-  browser UI. Only its relay source and deploy assets are shipped to the VPS.
+  browser UI. The VPS owns the landing page and browser bundle; laptops retain
+  the live, room-specific Paseo authority.
 - [`apps/paseo-plugin`](apps/paseo-plugin) — the desktop **Share session**
   extension that starts the local room server and manages its share links.
 
@@ -54,10 +55,11 @@ The shared room is a React + TypeScript client built with Vite from
 `apps/relay-web/web/`.
 `npm start` builds it before starting the room server; use `npm run dev:web`
 for frontend-only development and `npm run build:web` for a production build.
-Vite's hashed assets are served as `/r/<token>/assets/...`, so they remain
-capability-scoped by the same room link and do not widen the relay's public
-surface. The generated `apps/relay-web/public/room.html` is a build artifact;
-edit `apps/relay-web/web/`.
+Vite's hashed assets are served by the public relay as `/assets/...`. They
+contain UI code only; conversation data and actions remain capability-scoped at
+`/api/rooms/<token>/...` and the room WebSocket. The generated
+`apps/relay-web/public/room.html` is a build artifact; edit
+`apps/relay-web/web/`.
 
 ## Test
 

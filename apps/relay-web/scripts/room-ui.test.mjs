@@ -42,6 +42,10 @@ const server = await readFile(
   new URL("../src/server.ts", import.meta.url),
   "utf8",
 );
+const relay = await readFile(
+  new URL("../src/relay/relay.ts", import.meta.url),
+  "utf8",
+);
 
 test("the public root is a responsive, accessible Paseo Rooms landing page", () => {
   assert.match(
@@ -59,13 +63,18 @@ test("the public root is a responsive, accessible Paseo Rooms landing page", () 
   assert.match(landing, /@media \(max-width:\s*720px\)/);
   assert.match(server, /landingAssetResponse/);
   assert.match(server, /parts\[0\] === "landing"/);
+  assert.match(relay, /staticDocument\(res, "index\.html"\)/);
+  assert.match(relay, /safeAsset\(res, "landing"/);
 });
 
-test("the public room is a Vite entry with token-scoped relative assets", () => {
+test("the public room is a Vite entry with relay-owned immutable assets", () => {
   assert.match(page, /<div id="root"><\/div>/);
-  assert.match(page, /<base href="__ROOM_BASE__"/);
-  assert.match(page, /src="\.\/assets\/room-/);
-  assert.match(page, /href="\.\/assets\/room-/);
+  assert.doesNotMatch(page, /__ROOM_BASE__/);
+  assert.match(page, /src="\/assets\/room-/);
+  assert.match(page, /href="\/assets\/room-/);
+  assert.match(server, /function publicAssetResponse/);
+  assert.match(relay, /staticDocument\(res, "room\.html"\)/);
+  assert.match(relay, /parts\[0\] === "assets"/);
 });
 
 test("the React room keeps live, error, question, and composer behavior", () => {

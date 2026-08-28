@@ -5,7 +5,7 @@ Target architecture (decided; do not re-litigate in slices):
 ```
 Collaborator browser ── https://rooms.<domain>/r/<token>
                             │
-                      VPS RELAY  (dumb pipe: token -> laptop connection)
+                  VPS PUBLIC RELAY (landing + React UI + token routing)
                             ▲  single outbound WS per laptop ("host connection")
                             │
 Dev laptop: ROOM SERVER (this repo, exists) ── localhost Paseo daemon ── agent
@@ -49,12 +49,13 @@ Relay -> laptop:
 - `{v:1, type:"ping", t}` every 30s; drop connection after 2 missed pongs.
 
 Relay public routing (browser side):
-- Extract token from `GET /r/:token` and `ANY /api/rooms/:token(/...)$` and the
-  WS upgrade `/api/rooms/:token/ws`. Unknown/unmapped token -> 404.
-- Everything else -> 404. NOTE: this requires the room page to be fully
-  self-contained (slice 1 inlines room.js into room.html; no `/room.js` route
-  needed through the relay).
-- HTTP: forward as `http_request`, await matching `http_response` (30s timeout
+- `GET /` serves the landing page. `GET /assets/*` and `/landing/*` serve
+  public, immutable presentation assets that contain no room data or secrets.
+- `GET /r/:token` serves the public room shell only when the token has a live
+  laptop owner. Unknown/unmapped token -> 404.
+- `ANY /api/rooms/:token(/...)$` and the WS upgrade
+  `/api/rooms/:token/ws` are forwarded to the owner laptop.
+- HTTP: forward dynamic room calls as `http_request`, await matching `http_response` (30s timeout
   -> 504). WS: forward frames both ways via `ws_event` with a fresh `id` per
   browser socket; laptop treats `open` like a new local room socket.
 - Body size cap 256 KB, same as room server. No room creation via relay:

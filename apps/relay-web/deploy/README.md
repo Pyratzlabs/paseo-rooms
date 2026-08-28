@@ -1,8 +1,9 @@
 # Deploying the relay
 
-Only the relay (`src/relay/`) is deployed to a VPS. The room server and the
-Paseo daemon always stay on developers' laptops — see `docs/plan.md`. The
-laptop dials *out* to the relay; the relay never sees daemon credentials.
+The public deployment contains the relay (`src/relay/`) and the built landing
+page/shared-room React bundle. The room server and Paseo daemon always stay on
+developers' laptops — see `docs/plan.md`. The laptop dials *out* to the relay;
+the relay never sees daemon credentials.
 
 ## VPS prerequisites
 
@@ -41,8 +42,8 @@ the VPS (`chmod 600`).
    bash apps/relay-web/deploy/deploy.sh
    ```
 
-   This rsyncs `apps/relay-web/deploy/` and `apps/relay-web/src/relay/` to the
-   VPS, writes `deploy/.env`
+   This builds the React client, then rsyncs `apps/relay-web/deploy/`,
+   `apps/relay-web/src/relay/`, and `apps/relay-web/public/` to the VPS, writes `deploy/.env`
    there, runs `docker compose build && up -d` (relay + Caddy), and polls
    `https://$ROOMS_DOMAIN/` until it responds (Caddy's first TLS issuance can
    take up to a minute).
@@ -90,7 +91,5 @@ setup is migrated first.
 
 ## Health check
 
-The relay has no `/healthz` endpoint (unknown paths just 404 — see
-`src/relay/relay.ts`). `deploy.sh` and the workflow treat **any** HTTP
-response from `https://$ROOMS_DOMAIN/` (including a 404) as "the relay is
-up and Caddy's TLS is working."
+The relay has no `/healthz` endpoint. `deploy.sh` and the workflow use the
+public root as the liveness check.

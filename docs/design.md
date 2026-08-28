@@ -38,24 +38,31 @@ Key protocol facts discovered from source (`packages/protocol/src/messages.ts`):
 ## Architecture
 
 ```
-Browser A (Thomas)          Browser B (Alice)
-      \                          /
-       \   room token in URL    /
-        v                      v
-   paseo-rooms server  (this repo, :3000)
-     - static chat page        GET /r/<token>
-     - room info               GET /api/rooms/<token>
-     - full history            GET /api/rooms/<token>/history
-     - live fan-out            WS  /api/rooms/<token>/ws
-     - send message            POST /api/rooms/<token>/messages {message,name}
-     - create room (ADMIN)     POST /api/rooms {agentId}  + Bearer admin token
-            |
-            |  single privileged @getpaseo/client connection
-            v
-      Paseo daemon (127.0.0.1:6767) ── the shared Codex/Claude agent
+Browser A / Browser B
+         |
+         v
+Public relay (VPS)
+  - landing page               GET /
+  - React room shell + assets  GET /r/<token>, /assets/*
+  - dynamic token routing      /api/rooms/<token>/* and room WS
+         |
+         | one outbound host connection per laptop
+         v
+Laptop room server
+  - room info/history/live fan-out/message send
+  - create/revoke room (ADMIN, local only)
+  - token -> agentId mapping and privileged Paseo connection
+         |
+         v
+Paseo daemon (127.0.0.1:6767) ── the shared Codex/Claude agent
 ```
 
-One `@getpaseo/client` connection is shared by all rooms. Per room, the server
+The public UI bundle contains no room data, agent IDs, daemon credentials, or
+admin token, so it can be immutable and publicly cached. The relay serves the
+room shell only for a live registered token; every data/action request is still
+checked by both the relay route table and the laptop's room mapping.
+
+One `@getpaseo/client` connection is shared by all rooms on a laptop. Per room, the server
 holds one `timeline.subscribe` and fans events out to every connected browser
 socket. Browsers never receive daemon credentials, agent ids, or any way to
 name an agent: the server resolves `token -> agentId` internally and the

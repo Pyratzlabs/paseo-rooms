@@ -32,6 +32,10 @@ quality:
     - npm run typecheck
     - npm run typecheck:web
     - npm run build:web
+  artifacts:
+    paths:
+      - apps/relay-web/public/
+    expire_in: 1 day
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"
 
@@ -42,6 +46,7 @@ tests:
     - paseo-rooms
   script:
     - npm ci --no-audit --no-fund
+    - npm run build:web
     - npm run test:relay
     - npm run test:relay-client
     - npm run test:name
@@ -73,6 +78,13 @@ deploy:
   image: alpine:3.20
   tags:
     - paseo-rooms
+  needs:
+    - job: quality
+      artifacts: true
+    - job: tests
+      artifacts: false
+    - job: plugin-verify
+      artifacts: false
   before_script:
     - apk add --no-cache openssh-client rsync bash
     - mkdir -p ~/.ssh && chmod 700 ~/.ssh
@@ -102,8 +114,8 @@ deploy:
         COMPOSE_FILE="compose.lan.yml"
         RELAY_ENV_B64="$(printf 'RELAY_KEY=%s\n' "$RELAY_KEY" | base64 | tr -d '\n')"
       fi
-      ssh "$DEPLOY_SSH_TARGET" "mkdir -p '$DEPLOY_DIR/apps/relay-web/deploy' '$DEPLOY_DIR/apps/relay-web/src/relay'"
-      rsync -az --delete --exclude .env apps/relay-web/deploy/ apps/relay-web/src/relay/ --relative \
+      ssh "$DEPLOY_SSH_TARGET" "mkdir -p '$DEPLOY_DIR/apps/relay-web/deploy' '$DEPLOY_DIR/apps/relay-web/src/relay' '$DEPLOY_DIR/apps/relay-web/public'"
+      rsync -az --delete --exclude .env apps/relay-web/deploy/ apps/relay-web/src/relay/ apps/relay-web/public/ --relative \
         "$DEPLOY_SSH_TARGET":"$DEPLOY_DIR/"
       ssh "$DEPLOY_SSH_TARGET" "printf '%s' '$RELAY_ENV_B64' | base64 -d > '$DEPLOY_DIR/apps/relay-web/deploy/.env' && chmod 600 '$DEPLOY_DIR/apps/relay-web/deploy/.env' && cd '$DEPLOY_DIR/apps/relay-web/deploy' && docker compose --env-file .env -f $COMPOSE_FILE up -d --build --remove-orphans && for attempt in \$(seq 1 15); do if curl -sS http://127.0.0.1:8080/ >/dev/null; then exit 0; fi; sleep 1; done; exit 1"
   rules:

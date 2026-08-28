@@ -11,7 +11,7 @@ import { createRelay, type Relay } from "../src/relay/relay.js";
 
 const RELAY_KEY = "test-relay-key";
 
-let relay: Relay;
+let relay: Relay | null = null;
 let base: string;
 
 before(async () => {
@@ -26,7 +26,7 @@ before(async () => {
 });
 
 after(async () => {
-  await relay.close();
+  await relay?.close();
 });
 
 // ---- fake laptop -----------------------------------------------------------
@@ -80,7 +80,7 @@ class FakeLaptop {
   }
 
   static connect(key = RELAY_KEY): Promise<FakeLaptop> {
-    const ws = new WebSocket(`ws://127.0.0.1:${relay.port}/host`, {
+    const ws = new WebSocket(`ws://127.0.0.1:${relay!.port}/host`, {
       headers: { "x-relay-key": key },
     });
     const laptop = new FakeLaptop(ws);
@@ -127,7 +127,7 @@ function settle(ms = 50): Promise<void> {
 }
 
 function openBrowserWs(token: string): Promise<WebSocket> {
-  const ws = new WebSocket(`ws://127.0.0.1:${relay.port}/api/rooms/${token}/ws`);
+  const ws = new WebSocket(`ws://127.0.0.1:${relay!.port}/api/rooms/${token}/ws`);
   return new Promise((resolve, reject) => {
     ws.once("open", () => resolve(ws));
     ws.once("error", reject);
@@ -194,17 +194,28 @@ test("register + full http round-trip", async () => {
   // only content-type and x-forwarded-for cross the relay
   assert.deepEqual(Object.keys(forwarded.headers).sort(), ["content-type", "x-forwarded-for"]);
 
-  // GET /r/<token> is routable too
-  laptop.autoRespond = () => ({ status: 200, headers: { "content-type": "text/html" }, body: "<html>room</html>" });
+  // Presentation is served by the public relay, not relayed to the laptop.
+  const landing = await fetch(`${base}/`);
+  assert.equal(landing.status, 200);
+  assert.match(await landing.text(), /Bring a second engineer into the conversation/);
+
+  const forwardedBeforeStatic = laptop.received.filter((f) => f.type === "http_request").length;
   const page = await fetch(`${base}/r/tok-http`);
   assert.equal(page.status, 200);
-  assert.equal(await page.text(), "<html>room</html>");
+  const pageHtml = await page.text();
+  assert.match(pageHtml, /src="\/assets\/room-/);
+  assert.equal(laptop.received.filter((f) => f.type === "http_request").length, forwardedBeforeStatic);
 
-  const asset = await fetch(`${base}/r/tok-http/assets/room-test.js`);
+  const assetPath = pageHtml.match(/src="(\/assets\/room-[^"]+)"/)?.[1];
+  assert.ok(assetPath, "built room shell must reference a public Vite asset");
+  const asset = await fetch(`${base}${assetPath}`);
   assert.equal(asset.status, 200);
-  assert.equal(await asset.text(), "<html>room</html>");
-  const assetRequest = laptop.received.find((f) => f.type === "http_request" && f.path === "/r/tok-http/assets/room-test.js");
-  assert.ok(assetRequest, "token-scoped assets must route to their room host");
+  assert.match(asset.headers.get("content-type") ?? "", /javascript/);
+  assert.equal(laptop.received.filter((f) => f.type === "http_request").length, forwardedBeforeStatic);
+
+  const font = await fetch(`${base}/landing/made-tommy-medium.woff2`);
+  assert.equal(font.status, 200);
+  assert.equal(font.headers.get("content-type"), "font/woff2");
 
   laptop.close();
   await waitClose(laptop.ws);
@@ -246,12 +257,11 @@ test("ws relay in both directions", async () => {
   await waitClose(laptop.ws);
 });
 
-test("unknown token is 404 on http and ws; untokened routes are not routable", async () => {
+test("unknown room capabilities are 404 while public presentation remains available", async () => {
   assert.equal((await fetch(`${base}/api/rooms/nope`)).status, 404);
   assert.equal((await fetch(`${base}/r/nope`)).status, 404);
-  assert.equal((await fetch(`${base}/r/nope/assets/room.js`)).status, 404);
   assert.equal((await fetch(`${base}/api/rooms`, { method: "POST", body: "{}" })).status, 404);
-  assert.equal((await fetch(`${base}/`)).status, 404);
+  assert.equal((await fetch(`${base}/`)).status, 200);
   assert.equal((await fetch(`${base}/host`)).status, 404);
 
   const err = await openBrowserWs("nope").then(
@@ -268,7 +278,7 @@ test("bad relay key is rejected with 401", async () => {
   );
   assert.equal(bad?.status, 401);
 
-  const ws = new WebSocket(`ws://127.0.0.1:${relay.port}/host`); // no header at all
+  const ws = new WebSocket(`ws://127.0.0.1:${relay!.port}/host`); // no header at all
   const missing = await new Promise<number | undefined>((resolve) => {
     ws.once("unexpected-response", (_req, res) => resolve(res.statusCode));
     ws.once("open", () => resolve(200));

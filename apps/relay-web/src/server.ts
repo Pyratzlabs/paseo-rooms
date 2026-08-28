@@ -182,14 +182,27 @@ function landingAssetResponse(pieces: string[]): ApiResponse {
   }
 }
 
+/** Public, immutable Vite assets. They contain UI code only; room data remains token-gated. */
+function publicAssetResponse(pieces: string[]): ApiResponse {
+  if (pieces.length === 0 || pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece))) return notFound();
+  const root = path.join(PUBLIC_DIR, "assets");
+  const target = path.resolve(root, ...pieces);
+  if (!target.startsWith(`${root}${path.sep}`)) return notFound();
+  try {
+    const type = ASSET_TYPES[path.extname(target).toLowerCase()] ?? "application/octet-stream";
+    return { status: 200, headers: { "content-type": type, "cache-control": "public, max-age=31536000, immutable" }, body: fs.readFileSync(target) };
+  } catch {
+    return notFound();
+  }
+}
+
 function roomPageResponse(token: string): ApiResponse {
   if (!getRoom(token)) return notFound();
   try {
-    const page = fs.readFileSync(path.join(PUBLIC_DIR, "room.html"), "utf8");
     return {
       status: 200,
       headers: { "content-type": "text/html; charset=utf-8" },
-      body: Buffer.from(page.replace("__ROOM_BASE__", `/r/${encodeURIComponent(token)}/`)),
+      body: fs.readFileSync(path.join(PUBLIC_DIR, "room.html")),
     };
   } catch {
     return notFound();
@@ -207,20 +220,6 @@ const ASSET_TYPES: Record<string, string> = {
   ".webp": "image/webp",
   ".woff2": "font/woff2",
 };
-
-/** Serve only Vite's built asset directory, after proving room capability. */
-function roomAssetResponse(token: string, pieces: string[]): ApiResponse {
-  if (!getRoom(token) || pieces.length === 0 || pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece))) return notFound();
-  const root = path.join(PUBLIC_DIR, "assets");
-  const target = path.resolve(root, ...pieces);
-  if (!target.startsWith(`${root}${path.sep}`)) return notFound();
-  try {
-    const type = ASSET_TYPES[path.extname(target).toLowerCase()] ?? "application/octet-stream";
-    return { status: 200, headers: { "content-type": type, "cache-control": "public, max-age=31536000, immutable" }, body: fs.readFileSync(target) };
-  } catch {
-    return notFound();
-  }
-}
 
 function notFound(): ApiResponse {
   return { status: 404, headers: { "content-type": "text/plain; charset=utf-8" }, body: Buffer.from("not found") };
@@ -242,16 +241,16 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
     const url = new URL(req.path, BASE_URL);
     const parts = url.pathname.split("/").filter(Boolean);
 
-    // GET /r/<token> and its Vite assets. Assets stay capability-scoped: the
-    // relay never needs a broad /assets/* route and this handler validates token.
+    // Local development keeps the same shell as the public relay. The shell is
+    // token-gated; its hashed UI assets are public and contain no room data.
     if (req.method === "GET" && parts[0] === "r" && parts.length === 2) {
       return roomPageResponse(parts[1]);
     }
-    if (req.method === "GET" && parts[0] === "r" && parts[2] === "assets" && parts.length >= 4) {
-      return roomAssetResponse(parts[1], parts.slice(3));
-    }
     if (req.method === "GET" && parts[0] === "landing" && parts.length >= 2) {
       return landingAssetResponse(parts.slice(1));
+    }
+    if (req.method === "GET" && parts[0] === "assets" && parts.length >= 2) {
+      return publicAssetResponse(parts.slice(1));
     }
     if (req.method === "GET" && url.pathname === "/") {
       return fileResponse("index.html", "text/html; charset=utf-8");

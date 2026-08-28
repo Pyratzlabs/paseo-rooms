@@ -1,7 +1,6 @@
-# Builds and runs ONLY the paseo-rooms relay (src/relay/). The relay is the
-# single thing deployed to the VPS; the room server and daemon stay on
-# developers' laptops (see docs/plan.md). Kept intentionally minimal: no
-# @getpaseo/client, no room server, no build tooling beyond tsx at runtime.
+# Builds the public relay and its already-built static presentation. The room
+# server and daemon stay on developers' laptops; this image owns the landing
+# page and shared-room React bundle, then relays dynamic room traffic.
 
 FROM node:22-alpine
 
@@ -26,8 +25,11 @@ RUN printf '%s\n' \
 
 RUN npm install --no-audit --no-fund && npm cache clean --force
 
-# Only the relay source is copied into the image.
+# CI builds Vite before deploy and rsyncs the resulting public directory. The
+# relay image serves those files directly, so browsers never fetch UI assets
+# from a developer laptop.
 COPY src/relay ./src/relay
+COPY public ./public
 
 ENV NODE_ENV=production
 EXPOSE 8080
