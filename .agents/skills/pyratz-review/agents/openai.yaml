@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pyratz Review"
+  short_description: "Strict gated security plus code-quality review"
+  default_prompt: "Use $pyratz-review to run both adversarial and code-quality reviews on this branch against main unless I specify another target. Preserve both child reports and request changes if either child review requests changes."

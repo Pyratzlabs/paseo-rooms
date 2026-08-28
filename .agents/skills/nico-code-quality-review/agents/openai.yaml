@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nico Code Quality Review"
+  short_description: "Maintainability and framework quality reviews"
+  default_prompt: "Use $nico-code-quality-review to review this change for code quality and maintainability."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Nico Adversarial Review"
+  short_description: "Adversarial MR and code review workflow"
+  default_prompt: "Use $nico-adversarial-review to review this change adversarially and give a merge verdict."
