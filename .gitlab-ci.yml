@@ -20,15 +20,32 @@
 
 stages: [test, deploy]
 
-test:
+quality:
   stage: test
   image: node:22-alpine
   tags:
     - paseo-rooms
   script:
     - npm ci --no-audit --no-fund
+    - npm run format:check
+    - npm run lint
     - npm run typecheck
+    - npm run typecheck:web
+    - npm run build:web
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+
+tests:
+  stage: test
+  image: node:22-alpine
+  tags:
+    - paseo-rooms
+  script:
+    - npm ci --no-audit --no-fund
     - npm run test:relay
+    - npm run test:room-ui
+    - npm run test:questions
+    - npm run test:public-events
     - npm run test:ci
     - npm run test:lock
   rules:

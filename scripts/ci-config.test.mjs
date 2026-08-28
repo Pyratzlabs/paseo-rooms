@@ -2,10 +2,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const config = await readFile(new URL("../.gitlab-ci.yml", import.meta.url), "utf8");
+const config = await readFile(
+  new URL("../.gitlab-ci.yml", import.meta.url),
+  "utf8",
+);
+const packageJson = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+);
 
 test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
-  const jobs = ["test", "deploy"];
+  const jobs = ["quality", "tests", "deploy"];
 
   for (const job of jobs) {
     assert.match(
@@ -34,4 +40,45 @@ test("SSH host identity is pinned through a CI variable", () => {
 
 test("file-based SSH keys retain a trailing newline", () => {
   assert.match(config, /printf '\\n' >> ~\/\.ssh\/id_deploy/);
+});
+
+test("quality and behavior checks are separate CI jobs", () => {
+  for (const command of [
+    "npm run format:check",
+    "npm run lint",
+    "npm run typecheck",
+    "npm run typecheck:web",
+    "npm run build:web",
+  ]) {
+    assert.match(
+      config,
+      new RegExp(
+        `^quality:[\\s\\S]*?^    - ${command.replace(/[:]/g, "\\:")}$`,
+        "m",
+      ),
+      `quality must run ${command}`,
+    );
+  }
+  for (const command of [
+    "npm run test:relay",
+    "npm run test:room-ui",
+    "npm run test:questions",
+    "npm run test:public-events",
+    "npm run test:ci",
+    "npm run test:lock",
+  ]) {
+    assert.match(
+      config,
+      new RegExp(
+        `^tests:[\\s\\S]*?^    - ${command.replace(/[:]/g, "\\:")}$`,
+        "m",
+      ),
+      `tests must run ${command}`,
+    );
+  }
+  assert.equal(
+    packageJson.scripts["format:check"],
+    "prettier --check .gitlab-ci.yml eslint.config.js package.json scripts/ci-config.test.mjs web",
+  );
+  assert.equal(packageJson.scripts.lint, "eslint web eslint.config.js");
 });

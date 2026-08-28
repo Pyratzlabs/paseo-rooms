@@ -196,6 +196,12 @@ test("register + full http round-trip", async () => {
   assert.equal(page.status, 200);
   assert.equal(await page.text(), "<html>room</html>");
 
+  const asset = await fetch(`${base}/r/tok-http/assets/room-test.js`);
+  assert.equal(asset.status, 200);
+  assert.equal(await asset.text(), "<html>room</html>");
+  const assetRequest = laptop.received.find((f) => f.type === "http_request" && f.path === "/r/tok-http/assets/room-test.js");
+  assert.ok(assetRequest, "token-scoped assets must route to their room host");
+
   laptop.close();
   await waitClose(laptop.ws);
 });
@@ -237,6 +243,7 @@ test("ws relay in both directions", async () => {
 test("unknown token is 404 on http and ws; untokened routes are not routable", async () => {
   assert.equal((await fetch(`${base}/api/rooms/nope`)).status, 404);
   assert.equal((await fetch(`${base}/r/nope`)).status, 404);
+  assert.equal((await fetch(`${base}/r/nope/assets/room.js`)).status, 404);
   assert.equal((await fetch(`${base}/api/rooms`, { method: "POST", body: "{}" })).status, 404);
   assert.equal((await fetch(`${base}/`)).status, 404);
   assert.equal((await fetch(`${base}/host`)).status, 404);
