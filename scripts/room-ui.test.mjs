@@ -37,6 +37,13 @@ test("the React room gates live participation on a name and renders presence", (
   assert.match(styles, /\.participants/);
 });
 
+test("the React room follows new activity without stealing an older reader's scroll", () => {
+  assert.match(app, /useLayoutEffect/);
+  assert.match(app, /scrollToLatest/);
+  assert.match(app, /onScroll=/);
+  assert.match(app, /scrollToLatest\(true\)/);
+});
+
 test("the React room uses Paseo-aligned semantic tokens and responsive layout", () => {
   for (const token of ["--surface-0", "--surface-2", "--text-muted", "--accent", "--border"]) {
     assert.match(styles, new RegExp(token));
