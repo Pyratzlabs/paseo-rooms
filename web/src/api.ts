@@ -1,5 +1,6 @@
 export interface RoomQuestion {
   id: string;
+  kind: "question" | "plan";
   title?: string;
   description?: string;
   actions: Array<{ id: string; label?: string }>;
@@ -10,6 +11,7 @@ export interface RoomQuestion {
     multiSelect: boolean;
     allowOther: boolean;
   }>;
+  plan?: string | null;
 }
 
 export interface RoomQuestionAnswer {

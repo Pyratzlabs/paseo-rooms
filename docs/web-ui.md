@@ -19,8 +19,8 @@ should feel like a focused shared conversation rather than a debug event feed.
 
 | Person       | Can do                                                              | Cannot do                                                                    |
 | ------------ | ------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Host         | Creates/revokes a room locally; approves Paseo permissions in Paseo | Delegate daemon access through the room                                      |
-| Collaborator | Read the room timeline; send attributed messages                    | Choose an agent, approve permissions, browse the daemon, create/revoke rooms |
+| Host         | Creates/revokes a room locally; approves supported shared decisions | Delegate daemon access through the room                                      |
+| Collaborator | Read the room timeline; send attributed messages; accept/reject a displayed plan | Choose an agent, approve arbitrary permissions, browse the daemon, create/revoke rooms |
 | Agent        | Receives messages on its canonical Paseo timeline                   | Learn a browser's identity beyond the supplied display name                  |
 
 The URL is a bearer capability. The UI should say this plainly in a compact
@@ -47,6 +47,7 @@ room-information affordance, without making the page feel alarming.
 | `todo`                                     | Compact checklist card, replacing the previous checklist state rather than creating visual noise.                                                      |
 | `turn_started` / terminal turn events      | One working indicator; failure/cancellation adds a concise timeline notice.                                                                            |
 | `permission_requested`, `kind: "question"` | First-class decision card. Render safe top-level actions when present, or structured `AskUserQuestion` prompts with choices and an Other field.        |
+| `permission_requested`, `kind: "plan"`, `ExitPlanMode` | First-class plan card: safe plan Markdown plus exactly Reject / Implement. |
 | other `permission_requested` kinds         | Prominent non-actionable notice: "The host must respond in Paseo."                                                                                     |
 | unknown future item                        | Safe, quiet generic activity row; never fail the whole renderer.                                                                                       |
 
@@ -77,22 +78,31 @@ assistant prose.
 - Preserve a conventional free-text composer as the fallback for ordinary
   textual questions.
 
+`ExitPlanMode` is a separate, intentionally narrow shared capability. A room
+may show its plan Markdown and let a collaborator choose its daemon-supplied
+**Reject** or **Implement** action. This starts the agent's approved plan, so
+the card must make that consequence clear. No other `kind: "plan"` request is
+projected, and the browser cannot edit the plan, add feedback, or request
+additional permissions.
+
 ### Authority boundary
 
-Only `kind: "question"` is eligible for a collaborator answer in the first
-release. `tool`, `plan`, `mode`, and `other` requests remain host-only in
-Paseo. In particular, a plan-execution approval can imply permission to make
-changes on the host machine; a room capability must not silently become a
-machine-control capability.
+Only `kind: "question"` and the exact `kind: "plan"` / `name:
+"ExitPlanMode"` contract are eligible for a collaborator answer. `tool`,
+other `plan`, `mode`, and `other` requests remain host-only in Paseo. Plan
+execution can make changes on the host machine; it is therefore an explicit,
+visibly labelled shared decision rather than a general permission bridge.
 
 The server must resolve a question only after all of these checks:
 
 1. The room token maps to the agent that owns the pending request.
-2. The request is still pending and its kind is exactly `question`.
-3. A submitted action ID occurs in that request's current action set, or every
+2. The request is still pending and is either a `question`, or the exact
+   `ExitPlanMode` plan-approval request.
+3. A submitted action ID occurs in that request's current allowed action set,
+   or every
    submitted plan-question choice occurs in the current prompt at its submitted
    index.
-4. The response is an allow response with that selected action ID, or a
+4. The response is an allow/deny response with that selected action ID, or a
    server-rebuilt `updatedInput` containing the original `AskUserQuestion`
    input and validated answers. The browser cannot supply arbitrary tool input,
    permissions, metadata, or a different agent ID.

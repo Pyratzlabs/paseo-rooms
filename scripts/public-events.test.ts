@@ -26,6 +26,7 @@ test("redacts host-only daemon permission fields from shared stream events", () 
       description: "Pick one",
       actions: [{ id: "yes", label: "Yes" }],
       prompts: [],
+      plan: null,
     },
   });
 });
@@ -68,8 +69,43 @@ test("projects structured AskUserQuestion choices without its private metadata",
           allowOther: true,
         },
       ],
+      plan: null,
     },
   });
+});
+
+test("projects the plan text and only ExitPlanMode's accept/reject actions", () => {
+  assert.deepEqual(
+    publicStreamEvent({
+      type: "permission_requested",
+      request: {
+        id: "p1",
+        kind: "plan",
+        name: "ExitPlanMode",
+        input: { plan: "# A safe plan", planFilePath: "/private/plan.md" },
+        actions: [
+          { id: "reject", label: "Reject", behavior: "deny" },
+          { id: "implement", label: "Implement", behavior: "allow" },
+        ],
+      },
+    }),
+    {
+      type: "permission_requested",
+      kind: "plan",
+      request: {
+        id: "p1",
+        kind: "plan",
+        title: "Plan",
+        description: null,
+        actions: [
+          { id: "reject", label: "Reject" },
+          { id: "implement", label: "Implement" },
+        ],
+        prompts: [],
+        plan: "# A safe plan",
+      },
+    },
+  );
 });
 
 test("turns every host-only permission kind into a non-actionable redacted notice", () => {

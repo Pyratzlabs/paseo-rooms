@@ -38,6 +38,23 @@ export function Markdown({ text }: { text: string }) {
   const nodes: ReactNode[] = [];
   let index = 0;
   for (let line = 0; line < lines.length;) {
+    const fence = lines[line].match(/^\s*```([^\s`]*)?\s*$/);
+    if (fence) {
+      const language = fence[1] || undefined;
+      const code: string[] = [];
+      line++;
+      while (line < lines.length && !/^\s*```\s*$/.test(lines[line]))
+        code.push(lines[line++].replace(/^ {0,3}/, ""));
+      if (line < lines.length) line++;
+      nodes.push(
+        <pre key={index++}>
+          <code className={language ? `language-${language}` : undefined}>
+            {code.join("\n")}
+          </code>
+        </pre>,
+      );
+      continue;
+    }
     const heading = lines[line].match(/^(#{1,3})\s+(.+)$/);
     if (heading) {
       const Tag = heading[1].length === 1 ? "h2" : "h3";
@@ -61,7 +78,10 @@ export function Markdown({ text }: { text: string }) {
       }
       const List = ordered ? "ol" : "ul";
       nodes.push(
-        <List key={index++}>
+        <List
+          key={index++}
+          {...(ordered ? { start: Number.parseInt(bullet[1], 10) } : {})}
+        >
           {values.map((value, item) => (
             <li key={item}>
               <Inline text={value} />
@@ -76,6 +96,7 @@ export function Markdown({ text }: { text: string }) {
       line < lines.length &&
       lines[line] &&
       !/^(#{1,3})\s+/.test(lines[line]) &&
+      !/^\s*```/.test(lines[line]) &&
       !/^\s*([-*]|\d+\.)\s+/.test(lines[line])
     )
       paragraph.push(lines[line++]);

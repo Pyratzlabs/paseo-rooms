@@ -4,6 +4,7 @@ import {
   buildRoomQuestionUpdatedInput,
   canAnswerRoomQuestion,
   projectRoomQuestion,
+  roomQuestionActionBehavior,
 } from "../src/questions.js";
 
 const question = {
@@ -22,6 +23,7 @@ const question = {
 test("projects only safe structured question fields", () => {
   assert.deepEqual(projectRoomQuestion(question), {
     id: "ask-visual-direction",
+    kind: "question",
     title: "Which visual direction should we take?",
     description: "This changes the room renderer only.",
     actions: [
@@ -29,6 +31,7 @@ test("projects only safe structured question fields", () => {
       { id: "distinct", label: "Distinct identity" },
     ],
     prompts: [],
+    plan: null,
   });
 });
 
@@ -62,6 +65,7 @@ const askUserQuestion = {
 test("projects AskUserQuestion prompts without exposing raw tool input", () => {
   assert.deepEqual(projectRoomQuestion(askUserQuestion), {
     id: "ask-plan-scope",
+    kind: "question",
     title: "Choose planning scope",
     description: null,
     actions: [],
@@ -84,7 +88,56 @@ test("projects AskUserQuestion prompts without exposing raw tool input", () => {
         allowOther: true,
       },
     ],
+    plan: null,
   });
+});
+
+test("projects only the explicit ExitPlanMode approval capability", () => {
+  const request = {
+    id: "plan-1",
+    kind: "plan",
+    name: "ExitPlanMode",
+    input: { plan: "# Ship it", planFilePath: "/private/plan.md" },
+    metadata: { secret: true },
+    actions: [
+      { id: "reject", label: "Reject", behavior: "deny" },
+      { id: "implement", label: "Implement", behavior: "allow" },
+      { id: "other", label: "Do something else", behavior: "allow" },
+    ],
+  };
+  assert.deepEqual(projectRoomQuestion(request), {
+    id: "plan-1",
+    kind: "plan",
+    title: "Plan",
+    description: null,
+    actions: [
+      { id: "reject", label: "Reject" },
+      { id: "implement", label: "Implement" },
+    ],
+    prompts: [],
+    plan: "# Ship it",
+  });
+  assert.equal(
+    projectRoomQuestion({
+      ...request,
+      actions: [{ id: "implement", label: "Implement", behavior: "allow" }],
+    }),
+    null,
+  );
+  assert.equal(
+    projectRoomQuestion({
+      ...request,
+      actions: [
+        { id: "reject", label: "Reject", behavior: "deny" },
+        { id: "implement", label: "Fake reject", behavior: "deny" },
+        { id: "implement", label: "Implement", behavior: "allow" },
+      ],
+    }),
+    null,
+  );
+  assert.equal(roomQuestionActionBehavior(request, "implement"), "allow");
+  assert.equal(roomQuestionActionBehavior(request, "reject"), "deny");
+  assert.equal(roomQuestionActionBehavior(request, "other"), null);
 });
 
 test("rebuilds AskUserQuestion updated input from only valid selections", () => {
