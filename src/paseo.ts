@@ -4,12 +4,15 @@ import {
   type PaseoAgentStream,
   type PaseoClient,
 } from "@getpaseo/client";
+import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
+import { canAnswerRoomQuestion, projectRoomQuestion, roomQuestionActionBehavior, type RoomQuestion } from "./questions.js";
 
 const PASEO_URL = process.env.PASEO_URL ?? "ws://127.0.0.1:6767/ws";
 const PASEO_PASSWORD = process.env.PASEO_PASSWORD;
 
 let client: PaseoClient | null = null;
 let connecting: Promise<PaseoClient> | null = null;
+let permissionClient: DaemonClient | null = null;
 
 /** True once the daemon connection has been established at least once. */
 export function isConnected(): boolean {
@@ -132,4 +135,30 @@ export async function agentInfo(
     provider?: string | null;
   };
   return { title: title ?? null, status: status ?? null, provider: provider ?? null };
+}
+
+export async function listRoomQuestions(agentId: string): Promise<RoomQuestion[]> {
+  const agent = await getAgentHandle(agentId);
+  const snapshot = await agent.refresh();
+  const pending = snapshot?.agent.pendingPermissions ?? [];
+  return pending.flatMap((request) => {
+    const question = projectRoomQuestion(request);
+    return question ? [question] : [];
+  });
+}
+
+/** Re-read the live permission request before responding; never trust browser input. */
+export async function answerRoomQuestion(agentId: string, requestId: string, actionId: unknown): Promise<boolean> {
+  const agent = await getAgentHandle(agentId);
+  const snapshot = await agent.refresh();
+  const request = snapshot?.agent.pendingPermissions.find((pending) => pending.id === requestId);
+  if (!request || !canAnswerRoomQuestion(request, actionId)) return false;
+  const behavior = roomQuestionActionBehavior(request, actionId);
+  if (!behavior) return false;
+  if (!permissionClient) {
+    permissionClient = new DaemonClient({ url: PASEO_URL, password: PASEO_PASSWORD, clientType: "cli", clientId: "paseo-rooms" });
+    await permissionClient.connect();
+  }
+  await permissionClient.respondToPermission(agentId, requestId, { behavior, selectedActionId: actionId as string });
+  return true;
 }

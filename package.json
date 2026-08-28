@@ -12,6 +12,9 @@
     "typecheck": "tsc --noEmit",
     "relay": "tsx src/relay/relay.ts",
     "test:relay": "node --import tsx --test scripts/relay-protocol.test.ts",
+    "test:room-ui": "node --test scripts/room-ui.test.mjs",
+    "test:questions": "node --import tsx --test scripts/questions.test.ts",
+    "test:public-events": "node --import tsx --test scripts/public-events.test.ts",
     "test:ci": "node --test scripts/ci-config.test.mjs",
     "test:lock": "node --test scripts/package-lock.test.mjs"
   },
