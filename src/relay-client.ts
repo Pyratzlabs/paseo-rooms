@@ -95,6 +95,8 @@ export interface RoomSocket {
   close(code?: number, reason?: string): void;
   /** Register a close callback (fires once, whoever closed first). */
   onClose(handler: () => void): void;
+  /** Register an inbound browser-frame callback. */
+  onMessage(handler: (data: string) => void): void;
 }
 
 export interface RelayClientHooks {
@@ -144,6 +146,7 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
   class VirtualSocket implements RoomSocket {
     private closed = false;
     private handlers: Array<() => void> = [];
+    private messageHandlers: Array<(data: string) => void> = [];
 
     constructor(readonly id: string) {}
 
@@ -166,11 +169,20 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
       sockets.delete(this.id);
       for (const handler of this.handlers) handler();
       this.handlers = [];
+      this.messageHandlers = [];
     }
 
     onClose(handler: () => void): void {
       if (this.closed) handler();
       else this.handlers.push(handler);
+    }
+
+    onMessage(handler: (data: string) => void): void {
+      if (!this.closed) this.messageHandlers.push(handler);
+    }
+
+    receive(data: string): void {
+      if (!this.closed) for (const handler of this.messageHandlers) handler(data);
     }
   }
 
@@ -245,8 +257,9 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
               })
               .catch(() => virtual.close());
           } else if (frame.event === "message") {
-            // Room sockets are receive-only today; frames from the browser are
-            // accepted and ignored rather than trusted.
+            if (frame.dataB64 && frame.dataB64.length <= 4096) {
+              sockets.get(frame.id)?.receive(Buffer.from(frame.dataB64, "base64").toString("utf8"));
+            }
           } else {
             sockets.get(frame.id)?.remoteClosed();
           }

@@ -18,10 +18,13 @@
     "typecheck": "tsc --noEmit",
     "relay": "tsx src/relay/relay.ts",
     "test:relay": "node --import tsx --test scripts/relay-protocol.test.ts",
+    "test:relay-client": "node --import tsx --test scripts/relay-client.test.ts",
+    "test:name": "node --import tsx --test scripts/name.test.ts",
     "test:room-ui": "node --test scripts/room-ui.test.mjs",
     "test:timeline": "node --import tsx --test scripts/timeline.test.ts",
     "test:questions": "node --import tsx --test scripts/questions.test.ts",
     "test:public-events": "node --import tsx --test scripts/public-events.test.ts",
+    "test:presence": "node --import tsx --test scripts/presence.test.ts",
     "test:ci": "node --test scripts/ci-config.test.mjs",
     "test:lock": "node --test scripts/package-lock.test.mjs"
   },
