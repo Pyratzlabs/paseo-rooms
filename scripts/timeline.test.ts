@@ -34,7 +34,11 @@ test("live assistant chunks are coalesced until a timeline boundary", () => {
     author: "Thomas",
   };
 
-  const streamed = appendLiveItem(appendLiveItem([], greeting), update);
+  const streamed = appendLiveItem(
+    appendLiveItem([], greeting, false),
+    update,
+    true,
+  );
   assert.deepEqual(streamed, [
     {
       id: "stream:0",
@@ -43,8 +47,20 @@ test("live assistant chunks are coalesced until a timeline boundary", () => {
     },
   ]);
 
-  assert.deepEqual(appendLiveItem(streamed, collaborator), [
+  assert.deepEqual(appendLiveItem(streamed, collaborator, true), [
     ...streamed,
     collaborator,
   ]);
+
+  assert.deepEqual(
+    appendLiveItem(
+      streamed,
+      { id: "stream:3", kind: "assistant", text: "A new turn." },
+      false,
+    ),
+    [
+      ...streamed,
+      { id: "stream:3", kind: "assistant", text: "A new turn." },
+    ],
+  );
 });
