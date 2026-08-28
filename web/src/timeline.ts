@@ -1,4 +1,4 @@
-import type { StreamEvent, TimelineItem } from "./api";
+import type { StreamEvent, TimelineItem } from "./api.js";
 
 export type DisplayItem =
   | { id: string; kind: "user" | "assistant"; text: string; author?: string }
@@ -64,10 +64,16 @@ export function projectTimeline(
           id: key,
           kind: "todo",
           label: "Plan",
-          todos: (Array.isArray(item.items) ? item.items : []).map((todo) => ({
-            text: todo.text ?? "Untitled task",
-            done: todo.completed === true || todo.status === "completed",
-          })),
+          todos: (Array.isArray(item.items) ? item.items : []).map(
+            (todo: {
+              text?: string;
+              completed?: boolean;
+              status?: string;
+            }) => ({
+              text: todo.text ?? "Untitled task",
+              done: todo.completed === true || todo.status === "completed",
+            }),
+          ),
         });
         break;
       case "error":
