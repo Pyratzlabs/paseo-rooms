@@ -80,6 +80,8 @@ summary:focus-visible {
 .composer {
   border-color: var(--border);
   background: var(--surface-0);
+  min-width: 0;
+  max-width: 100%;
 }
 .room-header {
   position: sticky;
@@ -408,6 +410,7 @@ h1 {
 .composer {
   position: sticky;
   bottom: 0;
+  width: 100%;
   border-top: 1px solid var(--border);
 }
 .composer-inner {
