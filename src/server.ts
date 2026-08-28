@@ -15,10 +15,13 @@ import {
   agentInfo,
   ensureConnected,
   fetchFullHistory,
+  listRoomQuestions,
+  answerRoomQuestion,
   isConnected,
   sendToAgent,
   subscribeAgent,
 } from "./paseo.js";
+import { publicStreamEvent } from "./public-events.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
@@ -32,6 +35,8 @@ const ADMIN_TOKEN = getAdminToken();
 const RATE_LIMIT = 10; // max messages per token per window
 const RATE_WINDOW_MS = 60_000;
 const messageTimestamps = new Map<string, number[]>();
+const answeringQuestions = new Set<string>();
+const questionTimestamps = new Map<string, number[]>();
 
 function checkRateLimit(token: string): boolean {
   const now = Date.now();
@@ -42,6 +47,15 @@ function checkRateLimit(token: string): boolean {
   }
   timestamps.push(now);
   messageTimestamps.set(token, timestamps);
+  return true;
+}
+
+function checkQuestionRateLimit(token: string): boolean {
+  const now = Date.now();
+  const timestamps = (questionTimestamps.get(token) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (timestamps.length >= RATE_LIMIT) return false;
+  timestamps.push(now);
+  questionTimestamps.set(token, timestamps);
   return true;
 }
 
@@ -75,7 +89,7 @@ async function joinRoom(room: Room, socket: RoomSocket): Promise<void> {
     live = { sockets: new Set(), unsubscribe: null };
     liveRooms.set(room.token, live);
     live.unsubscribe = await subscribeAgent(room.agentId, ({ event, timestamp }) => {
-      const frame = JSON.stringify({ type: "stream", event, timestamp });
+      const frame = JSON.stringify({ type: "stream", event: publicStreamEvent(event), timestamp });
       for (const ws of live!.sockets) {
         ws.send(frame);
       }
@@ -227,12 +241,30 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
           label: room.label,
           createdAt: room.createdAt,
           agent: info ? { title: info.title, status: info.status, provider: info.provider } : null,
+          questions: await listRoomQuestions(room.agentId),
         });
       }
 
       if (req.method === "GET" && rest === "history") {
         const entries = await fetchFullHistory(room.agentId);
         return json(200, { entries });
+      }
+
+      if (req.method === "POST" && /^questions\/[^/]+\/respond$/.test(rest)) {
+        const requestId = rest.split("/")[1];
+        const key = `${room.token}:${requestId}`;
+        if (!checkQuestionRateLimit(room.token)) return json(429, { error: "rate limit exceeded" });
+        if (answeringQuestions.has(key)) return json(409, { error: "question already resolved" });
+        const body = JSON.parse(req.body.toString() || "{}");
+        if (typeof body.actionId !== "string") return json(400, { error: "actionId required" });
+        answeringQuestions.add(key);
+        try {
+          const answered = await answerRoomQuestion(room.agentId, requestId, body.actionId);
+          if (!answered) return json(409, { error: "question unavailable" });
+          return json(202, { ok: true });
+        } finally {
+          answeringQuestions.delete(key);
+        }
       }
 
       if (req.method === "POST" && rest === "messages") {

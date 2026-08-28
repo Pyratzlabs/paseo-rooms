@@ -1,0 +1,4 @@
+interface:
+  display_name: "Visual QA"
+  short_description: "Inspect web app screenshots with Playwright"
+  default_prompt: "Use $visual-qa to run a browser-based visual QA pass on this app."
