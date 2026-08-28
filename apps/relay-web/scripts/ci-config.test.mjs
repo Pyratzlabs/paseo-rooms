@@ -3,15 +3,15 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const config = await readFile(
-  new URL("../.gitlab-ci.yml", import.meta.url),
+  new URL("../../../.gitlab-ci.yml", import.meta.url),
   "utf8",
 );
 const packageJson = JSON.parse(
-  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+  await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
 );
 
 test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
-  const jobs = ["quality", "tests", "deploy"];
+  const jobs = ["quality", "tests", "plugin-verify", "deploy"];
 
   for (const job of jobs) {
     assert.match(
@@ -83,7 +83,10 @@ test("quality and behavior checks are separate CI jobs", () => {
   }
   assert.equal(
     packageJson.scripts["format:check"],
-    "prettier --check .gitlab-ci.yml eslint.config.js package.json scripts/ci-config.test.mjs web",
+    "npm run format:check --workspace @paseo-rooms/relay-web",
   );
-  assert.equal(packageJson.scripts.lint, "eslint web eslint.config.js");
+  assert.equal(
+    packageJson.scripts.lint,
+    "npm run lint --workspace @paseo-rooms/relay-web",
+  );
 });

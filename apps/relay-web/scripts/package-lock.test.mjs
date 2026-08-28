@@ -4,7 +4,7 @@ import test from "node:test";
 
 test("package-lock.json supports a clean npm install", () => {
   const result = spawnSync("npm", ["ci", "--dry-run", "--ignore-scripts"], {
-    cwd: new URL("..", import.meta.url),
+    cwd: new URL("../../..", import.meta.url),
     encoding: "utf8",
   });
 

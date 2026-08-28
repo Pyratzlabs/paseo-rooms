@@ -38,10 +38,11 @@ the VPS (`chmod 600`).
    SSH_TARGET=deploy@vps.example.com \
    ROOMS_DOMAIN=rooms.example.com \
    RELAY_KEY=<long random secret> \
-   bash deploy/deploy.sh
+   bash apps/relay-web/deploy/deploy.sh
    ```
 
-   This rsyncs `deploy/` and `src/relay/` to the VPS, writes `deploy/.env`
+   This rsyncs `apps/relay-web/deploy/` and `apps/relay-web/src/relay/` to the
+   VPS, writes `deploy/.env`
    there, runs `docker compose build && up -d` (relay + Caddy), and polls
    `https://$ROOMS_DOMAIN/` until it responds (Caddy's first TLS issuance can
    take up to a minute).
@@ -60,7 +61,7 @@ RELAY_URL=wss://rooms.example.com/host RELAY_KEY=<same secret as the VPS> npm st
 
 The room server registers its share tokens with the relay on boot and on
 every room create/revoke, and reconnects with backoff if the relay restarts.
-See `deploy/paseo-rooms.service` for an example systemd **user** unit that
+See `apps/relay-web/deploy/paseo-rooms.service` for an example systemd **user** unit that
 keeps this running in the background.
 
 ## Continuous deploy (GitLab CI)

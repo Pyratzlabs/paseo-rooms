@@ -25,7 +25,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=%h/code/paseo-rooms
+WorkingDirectory=%h/code/paseo-rooms/apps/relay-web
 EnvironmentFile=%h/.config/paseo-rooms.env
 ExecStart=/usr/bin/env npm start
 Restart=on-failure
