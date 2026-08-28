@@ -11,7 +11,7 @@ const packageJson = JSON.parse(
 );
 
 test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
-  const jobs = ["test", "deploy"];
+  const jobs = ["quality", "tests", "deploy"];
 
   for (const job of jobs) {
     assert.match(
@@ -42,22 +42,18 @@ test("file-based SSH keys retain a trailing newline", () => {
   assert.match(config, /printf '\\n' >> ~\/\.ssh\/id_deploy/);
 });
 
-test("the test job verifies formatting, linting, both TypeScript projects, the web build, and focused UI safety tests", () => {
+test("quality and behavior checks are separate CI jobs", () => {
   for (const command of [
     "npm run format:check",
     "npm run lint",
     "npm run typecheck",
     "npm run typecheck:web",
     "npm run build:web",
-    "npm run test:room-ui",
-    "npm run test:questions",
-    "npm run test:public-events",
   ]) {
-    assert.match(
-      config,
-      new RegExp(`^    - ${command.replace(/[:]/g, "\\:")}$`, "m"),
-      `CI must run ${command}`,
-    );
+    assert.match(config, new RegExp(`^quality:[\\s\\S]*?^    - ${command.replace(/[:]/g, "\\:")}$`, "m"), `quality must run ${command}`);
+  }
+  for (const command of ["npm run test:relay", "npm run test:room-ui", "npm run test:questions", "npm run test:public-events", "npm run test:ci", "npm run test:lock"]) {
+    assert.match(config, new RegExp(`^tests:[\\s\\S]*?^    - ${command.replace(/[:]/g, "\\:")}$`, "m"), `tests must run ${command}`);
   }
   assert.equal(
     packageJson.scripts["format:check"],
