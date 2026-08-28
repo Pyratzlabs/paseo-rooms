@@ -162,6 +162,26 @@ function fileResponse(file: string, type: string): ApiResponse {
   }
 }
 
+function landingAssetResponse(pieces: string[]): ApiResponse {
+  if (pieces.length === 0 || pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece))) return notFound();
+  const root = path.join(PUBLIC_DIR, "landing");
+  const target = path.resolve(root, ...pieces);
+  if (!target.startsWith(`${root}${path.sep}`)) return notFound();
+  try {
+    const type = ASSET_TYPES[path.extname(target).toLowerCase()] ?? "application/octet-stream";
+    return {
+      status: 200,
+      headers: {
+        "content-type": type,
+        "cache-control": "public, max-age=31536000, immutable",
+      },
+      body: fs.readFileSync(target),
+    };
+  } catch {
+    return notFound();
+  }
+}
+
 function roomPageResponse(token: string): ApiResponse {
   if (!getRoom(token)) return notFound();
   try {
@@ -229,6 +249,9 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
     }
     if (req.method === "GET" && parts[0] === "r" && parts[2] === "assets" && parts.length >= 4) {
       return roomAssetResponse(parts[1], parts.slice(3));
+    }
+    if (req.method === "GET" && parts[0] === "landing" && parts.length >= 2) {
+      return landingAssetResponse(parts.slice(1));
     }
     if (req.method === "GET" && url.pathname === "/") {
       return fileResponse("index.html", "text/html; charset=utf-8");

@@ -34,6 +34,32 @@ const markdown = await readFile(
   new URL("../web/src/components/Markdown.tsx", import.meta.url),
   "utf8",
 );
+const landing = await readFile(
+  new URL("../public/index.html", import.meta.url),
+  "utf8",
+);
+const server = await readFile(
+  new URL("../src/server.ts", import.meta.url),
+  "utf8",
+);
+
+test("the public root is a responsive, accessible Paseo Rooms landing page", () => {
+  assert.match(
+    landing,
+    /<meta name="viewport" content="width=device-width, initial-scale=1"/,
+  );
+  assert.match(
+    landing,
+    /<h1>Bring a second engineer into the conversation\.<\/h1>/,
+  );
+  assert.match(landing, /Collaborative agent work/);
+  assert.match(landing, /room-plan-approval\.png/);
+  assert.match(landing, /room-question\.png/);
+  assert.match(landing, /made-tommy-medium\.woff2/);
+  assert.match(landing, /@media \(max-width:\s*720px\)/);
+  assert.match(server, /landingAssetResponse/);
+  assert.match(server, /parts\[0\] === "landing"/);
+});
 
 test("the public room is a Vite entry with token-scoped relative assets", () => {
   assert.match(page, /<div id="root"><\/div>/);
