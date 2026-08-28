@@ -80,6 +80,8 @@ summary:focus-visible {
 .composer {
   border-color: var(--border);
   background: var(--surface-0);
+  min-width: 0;
+  max-width: 100%;
 }
 .room-header {
   position: sticky;
@@ -100,7 +102,9 @@ summary:focus-visible {
   grid-template-columns: 172px minmax(0, 760px);
   gap: 32px;
   width: min(calc(100% - 32px), 964px);
+  max-width: 100%;
   min-height: 0;
+  min-width: 0;
   margin: 0 auto;
 }
 .room-body .conversation {
@@ -406,9 +410,11 @@ h1 {
 .composer {
   position: sticky;
   bottom: 0;
+  width: 100%;
   border-top: 1px solid var(--border);
 }
 .composer-inner {
+  min-width: 0;
   padding: 12px 0 max(12px, env(safe-area-inset-bottom));
 }
 .send-error {
@@ -419,6 +425,7 @@ h1 {
 .fields {
   display: flex;
   align-items: flex-end;
+  min-width: 0;
   gap: 8px;
 }
 .fields input,
@@ -570,7 +577,10 @@ h1 {
   }
   .fields {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .fields textarea {
+    min-width: 0;
   }
   .help {
     margin-left: 0;
