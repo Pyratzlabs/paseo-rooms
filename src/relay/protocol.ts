@@ -153,13 +153,17 @@ export type PublicRoute =
   | null;
 
 /**
- * Routable browser-side paths, per protocol v1: `GET /r/:token`,
+ * Routable browser-side paths, per protocol v1: `GET /r/:token`, its
+ * capability-scoped Vite assets (`/r/:token/assets/...`),
  * `ANY /api/rooms/:token(/...)`, and the WS upgrade `/api/rooms/:token/ws`.
  * Everything else — notably `POST /api/rooms` with no token — is not routable.
  */
 export function matchPublicRoute(pathname: string, isUpgrade: boolean): PublicRoute {
   const parts = pathname.split("/").filter(Boolean);
   if (!isUpgrade && parts.length === 2 && parts[0] === "r") {
+    return { kind: "page", token: parts[1] };
+  }
+  if (!isUpgrade && parts.length >= 4 && parts[0] === "r" && parts[2] === "assets") {
     return { kind: "page", token: parts[1] };
   }
   if (parts.length >= 3 && parts[0] === "api" && parts[1] === "rooms") {

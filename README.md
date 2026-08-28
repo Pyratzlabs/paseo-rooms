@@ -40,6 +40,15 @@ Then:
    chat — messages are attributed as `[Name]` and go to the same Paseo agent,
    and replies stream to both windows. Reloading restores history from Paseo.
 
+## Web frontend
+
+The shared room is a React + TypeScript client built with Vite from `web/`.
+`npm start` builds it before starting the room server; use `npm run dev:web`
+for frontend-only development and `npm run build:web` for a production build.
+Vite's hashed assets are served as `/r/<token>/assets/...`, so they remain
+capability-scoped by the same room link and do not widen the relay's public
+surface. The generated `public/room.html` is a build artifact; edit `web/`.
+
 ## Test
 
 With the daemon and the room server running:
