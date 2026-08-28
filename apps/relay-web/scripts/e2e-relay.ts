@@ -167,9 +167,14 @@ async function main(): Promise<void> {
 
   const pageRes = await fetch(`${RELAY_BASE}/r/${token}`);
   const pageHtml = await pageRes.text();
+  const assetPath = pageHtml.match(/src="(\/assets\/room-[^"]+)"/)?.[1];
+  const assetRes = assetPath ? await fetch(`${RELAY_BASE}${assetPath}`) : null;
   check(
-    "room page is served through the relay and is self-contained",
-    pageRes.status === 200 && pageHtml.includes("<script") && !pageHtml.includes("src=\"/room.js\""),
+    "room shell and React bundle are served by the public relay",
+    pageRes.status === 200 &&
+      pageHtml.includes("<script") &&
+      pageHtml.includes('src="/assets/') &&
+      assetRes?.status === 200,
   );
 
   const infoBody = await (await fetch(`${RELAY_BASE}/api/rooms/${token}`)).text();

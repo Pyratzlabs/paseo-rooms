@@ -29,6 +29,13 @@ test("the deploy reconciles the live deployment and verifies it", () => {
   assert.match(config, /COMPOSE_FILE="compose\.lan\.yml"/);
   assert.match(config, /-f \$COMPOSE_FILE up -d --build --remove-orphans/);
   assert.match(config, /ROOMS_DOMAIN=%s/);
+  assert.match(config, /apps\/relay-web\/public\//);
+  assert.match(config, /needs:\n    - job: quality\n      artifacts: true/);
+  assert.match(config, /needs:[\s\S]*?job: tests\n      artifacts: false/);
+  assert.match(
+    config,
+    /needs:[\s\S]*?job: plugin-verify\n      artifacts: false/,
+  );
   assert.match(config, /for attempt in \\?\$\(seq 1 15\)/);
   assert.match(config, /curl -sS http:\/\/127\.0\.0\.1:8080\//);
 });
@@ -59,6 +66,11 @@ test("quality and behavior checks are separate CI jobs", () => {
       `quality must run ${command}`,
     );
   }
+  assert.match(
+    config,
+    /^tests:[\s\S]*?^    - npm run build:web$/m,
+    "tests must build the public room bundle before exercising relay static serving",
+  );
   for (const command of [
     "npm run test:relay",
     "npm run test:relay-client",

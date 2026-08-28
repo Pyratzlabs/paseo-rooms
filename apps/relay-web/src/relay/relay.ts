@@ -8,8 +8,10 @@
  */
 
 import http from "node:http";
+import fs from "node:fs";
+import path from "node:path";
 import type { Duplex } from "node:stream";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   MAX_BODY_BYTES,
@@ -40,6 +42,43 @@ export interface Relay {
 }
 
 const MISSED_PONG_LIMIT = 2;
+const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "public");
+
+const ASSET_TYPES: Record<string, string> = {
+  ".css": "text/css; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".webp": "image/webp",
+  ".woff2": "font/woff2",
+};
+
+function safeAsset(res: http.ServerResponse, directory: string, pieces: string[], cacheControl: string): boolean {
+  if (pieces.length === 0 || pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece))) return false;
+  const root = path.join(PUBLIC_DIR, directory);
+  const target = path.resolve(root, ...pieces);
+  if (!target.startsWith(`${root}${path.sep}`)) return false;
+  try {
+    const type = ASSET_TYPES[path.extname(target).toLowerCase()] ?? "application/octet-stream";
+    res.writeHead(200, { "content-type": type, "cache-control": cacheControl });
+    res.end(fs.readFileSync(target));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function staticDocument(res: http.ServerResponse, file: string): boolean {
+  try {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" });
+    res.end(fs.readFileSync(path.join(PUBLIC_DIR, file)));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 interface PendingRequest {
   settle(frame: HttpResponseFrame): void;
@@ -219,6 +258,24 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://relay.invalid");
+      const parts = url.pathname.split("/").filter(Boolean);
+
+      // Presentation belongs to the public relay. Dynamic room calls below
+      // remain routed to the laptop that owns the capability token.
+      if (req.method === "GET" && url.pathname === "/") {
+        return void (staticDocument(res, "index.html") || plain(res, 404, "not found"));
+      }
+      if (req.method === "GET" && parts[0] === "landing") {
+        return void (safeAsset(res, "landing", parts.slice(1), "public, max-age=31536000, immutable") || plain(res, 404, "not found"));
+      }
+      if (req.method === "GET" && parts[0] === "assets") {
+        return void (safeAsset(res, "assets", parts.slice(1), "public, max-age=31536000, immutable") || plain(res, 404, "not found"));
+      }
+      if (req.method === "GET" && parts[0] === "r" && parts.length === 2) {
+        if (!routeFor(parts[1])) return plain(res, 404, "not found");
+        return void (staticDocument(res, "room.html") || plain(res, 404, "not found"));
+      }
+
       const route = matchPublicRoute(url.pathname, false);
       if (!route) return plain(res, 404, "not found");
 

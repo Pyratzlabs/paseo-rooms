@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Idempotent deploy of the relay + Caddy to the VPS named by SSH_TARGET.
-# Only the relay is deployed here — the room server and Paseo daemon stay on
-# developers' laptops (see docs/plan.md).
+# Idempotent deploy of the public relay + Caddy to the VPS named by SSH_TARGET.
+# The VPS serves the landing page and React room bundle; the room server and
+# Paseo daemon stay on developers' laptops (see docs/plan.md).
 #
 # Required env:
 #   SSH_TARGET   e.g. deploy@1.2.3.4  (or an entry in ~/.ssh/config)
@@ -13,7 +13,7 @@
 #   REMOTE_DIR     remote checkout dir (default: ~/paseo-rooms)
 #
 # What it does:
-#   1. rsync the repo subset the relay needs (deploy/ + src/relay/) to the VPS
+#   1. build the public UI and rsync deploy/, src/relay/, and public/ to the VPS
 #   2. write/refresh a .env file next to compose.yml on the VPS
 #   3. `docker compose build && up -d`
 #   4. curl the relay's public URL and confirm it responds at all (the relay
@@ -38,9 +38,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "==> Ensuring remote directory exists: $REMOTE_DIR"
 # shellcheck disable=SC2086
-ssh $SSH_OPTS "$SSH_TARGET" "mkdir -p '$REMOTE_DIR/deploy' '$REMOTE_DIR/src/relay'"
+ssh $SSH_OPTS "$SSH_TARGET" "mkdir -p '$REMOTE_DIR/deploy' '$REMOTE_DIR/src/relay' '$REMOTE_DIR/public'"
 
-echo "==> Syncing deploy assets and relay source to $SSH_TARGET:$REMOTE_DIR"
+echo "==> Building the public room UI"
+(cd "$REPO_ROOT" && npm run build:web)
+
+echo "==> Syncing deploy assets, public UI, and relay source to $SSH_TARGET:$REMOTE_DIR"
 # shellcheck disable=SC2086
 rsync -az --delete -e "ssh $SSH_OPTS" \
   "$REPO_ROOT/deploy/" "$SSH_TARGET:$REMOTE_DIR/deploy/" \
@@ -49,6 +52,10 @@ rsync -az --delete -e "ssh $SSH_OPTS" \
 # shellcheck disable=SC2086
 rsync -az --delete -e "ssh $SSH_OPTS" \
   "$REPO_ROOT/src/relay/" "$SSH_TARGET:$REMOTE_DIR/src/relay/"
+
+# shellcheck disable=SC2086
+rsync -az --delete -e "ssh $SSH_OPTS" \
+  "$REPO_ROOT/public/" "$SSH_TARGET:$REMOTE_DIR/public/"
 
 echo "==> Writing remote .env"
 # shellcheck disable=SC2086
@@ -75,5 +82,5 @@ until curl -fsS -o /dev/null -w '%{http_code}' "https://$ROOMS_DOMAIN/" 2>/dev/n
 done
 
 status="$(curl -sS -o /dev/null -w '%{http_code}' "https://$ROOMS_DOMAIN/" || true)"
-echo "==> Relay responded with HTTP $status (any response, including 404, means it's up)"
+echo "==> Relay responded with HTTP $status"
 echo "==> Deploy complete"

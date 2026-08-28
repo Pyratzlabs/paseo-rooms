@@ -3,13 +3,13 @@ import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 
 /**
- * `./` keeps generated imports relative to the room document. The server adds
- * a token-scoped <base> element when it serves that document, so every asset
- * remains behind /r/:token rather than becoming a new public relay route.
+ * The public relay owns the shared-room shell and its hashed Vite assets.
+ * Dynamic room data still goes through the token-scoped API and WebSocket
+ * routes, but the UI bundle itself is safe to cache at a public /assets path.
  */
 export default defineConfig({
   root: import.meta.dirname,
-  base: "./",
+  base: "/",
   plugins: [react()],
   build: {
     outDir: resolve(import.meta.dirname, "../public"),
