@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import {
   api,
   roomSocket,
@@ -17,6 +23,7 @@ import { Timeline } from "./components/Timeline";
 import { Composer } from "./components/Composer";
 import { NameGate } from "./components/NameGate";
 import { Participants } from "./components/Participants";
+import { shouldFollowTimeline } from "./scroll";
 
 function tokenFromPath(): string | null {
   const parts = location.pathname.split("/").filter(Boolean);
@@ -53,6 +60,25 @@ export default function App() {
   const timer = useRef<number | null>(null);
   const streamPosition = useRef(0);
   const continueAssistant = useRef(false);
+  const timeline = useRef<HTMLElement>(null);
+  const followTimeline = useRef(true);
+  const initiallyScrolled = useRef(false);
+
+  const scrollToLatest = useCallback((force = false) => {
+    if (force) followTimeline.current = true;
+    window.requestAnimationFrame(() => {
+      const element = timeline.current;
+      if (!element || (!force && !followTimeline.current)) return;
+      element.scrollTop = element.scrollHeight;
+      initiallyScrolled.current = true;
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!name || (items.length === 0 && questions.length === 0 && !working))
+      return;
+    if (!initiallyScrolled.current || followTimeline.current) scrollToLatest();
+  }, [items, name, questions, scrollToLatest, working]);
 
   const sync = useCallback(async () => {
     if (!token) return;
@@ -155,6 +181,7 @@ export default function App() {
     setError(null);
     try {
       await api.message(token, message, name);
+      scrollToLatest(true);
     } catch (cause) {
       setError(
         cause instanceof Error && cause.message === "429"
@@ -171,6 +198,7 @@ export default function App() {
     setError(null);
     try {
       await api.answer(token, question.id, actionId);
+      scrollToLatest(true);
       setQuestions((current) =>
         current.filter((value) => value.id !== question.id),
       );
@@ -233,7 +261,15 @@ export default function App() {
       </header>
       <div className="room-body">
         <Participants participants={participants} />
-        <main className="timeline" aria-busy={!room}>
+        <main
+          className="timeline"
+          aria-busy={!room}
+          ref={timeline}
+          onScroll={(event) => {
+            const element = event.currentTarget;
+            followTimeline.current = shouldFollowTimeline(element);
+          }}
+        >
           <div className="conversation">
             <Timeline
               items={items}

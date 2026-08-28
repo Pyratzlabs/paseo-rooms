@@ -20,6 +20,7 @@
     "test:relay": "node --import tsx --test scripts/relay-protocol.test.ts",
     "test:relay-client": "node --import tsx --test scripts/relay-client.test.ts",
     "test:name": "node --import tsx --test scripts/name.test.ts",
+    "test:scroll": "node --import tsx --test scripts/scroll.test.ts",
     "test:room-ui": "node --test scripts/room-ui.test.mjs",
     "test:timeline": "node --import tsx --test scripts/timeline.test.ts",
     "test:questions": "node --import tsx --test scripts/questions.test.ts",
