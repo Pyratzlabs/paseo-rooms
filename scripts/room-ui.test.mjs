@@ -6,6 +6,8 @@ const page = await readFile(new URL("../public/room.html", import.meta.url), "ut
 const app = await readFile(new URL("../web/src/App.tsx", import.meta.url), "utf8");
 const styles = await readFile(new URL("../web/src/styles.css", import.meta.url), "utf8");
 const timeline = await readFile(new URL("../web/src/timeline.ts", import.meta.url), "utf8");
+const nameGate = await readFile(new URL("../web/src/components/NameGate.tsx", import.meta.url), "utf8");
+const participants = await readFile(new URL("../web/src/components/Participants.tsx", import.meta.url), "utf8");
 
 test("the public room is a Vite entry with token-scoped relative assets", () => {
   assert.match(page, /<div id="root"><\/div>/);
@@ -22,6 +24,17 @@ test("the React room keeps live, error, question, and composer behavior", () => 
   assert.match(app, /roomSocket\(token\)/);
   assert.match(timeline, /permission_requested/);
   assert.match(timeline, /The agent needs the host to respond in Paseo/);
+});
+
+test("the React room gates live participation on a name and renders presence", () => {
+  assert.match(app, /socket\?\.send\(JSON\.stringify\(\{ type: "hello", name \}\)\)/);
+  assert.match(app, /frame\.type === "presence"/);
+  assert.match(app, /<NameGate/);
+  assert.match(app, /<Participants/);
+  assert.match(nameGate, /What should we call you\?/);
+  assert.match(participants, /People/);
+  assert.match(styles, /\.room-body/);
+  assert.match(styles, /\.participants/);
 });
 
 test("the React room uses Paseo-aligned semantic tokens and responsive layout", () => {

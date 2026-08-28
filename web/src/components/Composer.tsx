@@ -4,19 +4,13 @@ export function Composer({
   onSend,
   error,
 }: {
-  onSend: (message: string, name: string) => Promise<void>;
+  onSend: (message: string) => Promise<void>;
   error: string | null;
 }) {
-  const [name, setName] = useState(
-    () => localStorage.getItem("paseo-rooms-name") ?? "",
-  );
   const [message, setMessage] = useState("");
   const [sending, setSending] = useState(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    localStorage.setItem("paseo-rooms-name", name.trim());
-  }, [name]);
   useEffect(() => {
     if (!textarea.current) return;
     textarea.current.style.height = "auto";
@@ -27,7 +21,7 @@ export function Composer({
     if (!message.trim() || sending) return;
     setSending(true);
     try {
-      await onSend(message.trim(), name.trim());
+      await onSend(message.trim());
       setMessage("");
     } finally {
       setSending(false);
@@ -50,13 +44,6 @@ export function Composer({
           </div>
         )}
         <div className="fields">
-          <input
-            value={name}
-            onChange={(event) => setName(event.target.value)}
-            placeholder="Your name"
-            autoComplete="name"
-            aria-label="Your name"
-          />
           <textarea
             ref={textarea}
             value={message}

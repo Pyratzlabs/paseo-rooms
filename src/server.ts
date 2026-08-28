@@ -22,6 +22,7 @@ import {
   subscribeAgent,
 } from "./paseo.js";
 import { publicStreamEvent } from "./public-events.js";
+import { parsePresenceHello, RoomPresence, sanitizeParticipantName } from "./presence.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
@@ -63,6 +64,7 @@ function checkQuestionRateLimit(token: string): boolean {
 
 interface LiveRoom {
   sockets: Set<RoomSocket>;
+  presence: RoomPresence<RoomSocket>;
   unsubscribe: (() => void) | null;
 }
 
@@ -86,7 +88,7 @@ function closeLiveRoom(token: string): void {
 async function joinRoom(room: Room, socket: RoomSocket): Promise<void> {
   let live = liveRooms.get(room.token);
   if (!live) {
-    live = { sockets: new Set(), unsubscribe: null };
+    live = { sockets: new Set(), presence: new RoomPresence(), unsubscribe: null };
     liveRooms.set(room.token, live);
     live.unsubscribe = await subscribeAgent(room.agentId, ({ event, timestamp }) => {
       const frame = JSON.stringify({ type: "stream", event: publicStreamEvent(event), timestamp });
@@ -96,8 +98,18 @@ async function joinRoom(room: Room, socket: RoomSocket): Promise<void> {
     });
   }
   live.sockets.add(socket);
+  const broadcastPresence = () => {
+    const frame = JSON.stringify({ type: "presence", participants: live!.presence.list() });
+    for (const ws of live!.sockets) ws.send(frame);
+  };
+  socket.onMessage((data) => {
+    const name = parsePresenceHello(data);
+    if (name && live!.presence.join(socket, name)) broadcastPresence();
+  });
+  socket.send(JSON.stringify({ type: "presence", participants: live.presence.list() }));
   socket.onClose(() => {
     live!.sockets.delete(socket);
+    if (live!.presence.leave(socket)) broadcastPresence();
     if (live!.sockets.size === 0) {
       live!.unsubscribe?.();
       liveRooms.delete(room.token);
@@ -113,6 +125,7 @@ function wrapWebSocket(ws: WebSocket): RoomSocket {
     },
     close: (code, reason) => ws.close(code, reason),
     onClose: (handler) => ws.on("close", handler),
+    onMessage: (handler) => ws.on("message", (data) => handler(data.toString())),
   };
 }
 
@@ -191,13 +204,6 @@ function roomAssetResponse(token: string, pieces: string[]): ApiResponse {
 
 function notFound(): ApiResponse {
   return { status: 404, headers: { "content-type": "text/plain; charset=utf-8" }, body: Buffer.from("not found") };
-}
-
-/** Collaborator display name: keep it short and unable to fake timeline markup. */
-function sanitizeName(raw: unknown): string | null {
-  if (typeof raw !== "string") return null;
-  const name = raw.replace(/[\[\]\n\r]/g, "").trim().slice(0, 40);
-  return name.length > 0 ? name : null;
 }
 
 // ---- routes ----------------------------------------------------------------
@@ -316,10 +322,11 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
         const body = JSON.parse(req.body.toString() || "{}");
         const message = typeof body.message === "string" ? body.message.trim() : "";
         if (!message) return json(400, { error: "message required" });
-        const name = sanitizeName(body.name);
+        const name = sanitizeParticipantName(body.name);
         // The room's mapping is the only routing authority: any agent_id in the
         // body is ignored.
-        const text = name ? `[${name}]\n${message}` : message;
+        if (!name) return json(400, { error: "name required" });
+        const text = `[${name}]\n${message}`;
         await sendToAgent(room.agentId, text);
         return json(202, { ok: true });
       }

@@ -3,6 +3,7 @@ import {
   api,
   roomSocket,
   type RoomInfo,
+  type RoomParticipant,
   type RoomQuestion,
   type StreamEvent,
 } from "./api";
@@ -14,10 +15,22 @@ import {
 } from "./timeline";
 import { Timeline } from "./components/Timeline";
 import { Composer } from "./components/Composer";
+import { NameGate } from "./components/NameGate";
+import { Participants } from "./components/Participants";
 
 function tokenFromPath(): string | null {
   const parts = location.pathname.split("/").filter(Boolean);
   return parts[0] === "r" && parts.length >= 2 ? parts[1] : null;
+}
+
+function isParticipant(value: unknown): value is RoomParticipant {
+  if (typeof value !== "object" || value === null) return false;
+  const participant = value as Partial<RoomParticipant>;
+  return (
+    typeof participant.id === "string" &&
+    typeof participant.name === "string" &&
+    (participant.role === "host" || participant.role === "collaborator")
+  );
 }
 
 export default function App() {
@@ -25,6 +38,10 @@ export default function App() {
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [items, setItems] = useState<DisplayItem[]>([]);
   const [questions, setQuestions] = useState<RoomQuestion[]>([]);
+  const [participants, setParticipants] = useState<RoomParticipant[]>([
+    { id: "host", name: "Host", role: "host" },
+  ]);
+  const [name, setName] = useState<string | null>(null);
   const [state, setState] = useState<"connecting" | "live" | "reconnecting">(
     "connecting",
   );
@@ -58,10 +75,12 @@ export default function App() {
     let disposed = false;
     let socket: WebSocket | null = null;
     const connect = () => {
+      if (!name) return;
       socket = roomSocket(token);
       socket.onopen = () => {
         retry.current = 1000;
         setState("live");
+        socket?.send(JSON.stringify({ type: "hello", name }));
         void sync().catch(() => !disposed && setFatal(true));
       };
       socket.onmessage = (message) => {
@@ -69,7 +88,12 @@ export default function App() {
           const frame = JSON.parse(message.data) as {
             type?: string;
             event?: StreamEvent;
+            participants?: unknown[];
           };
+          if (frame.type === "presence" && Array.isArray(frame.participants)) {
+            setParticipants(frame.participants.filter(isParticipant));
+            return;
+          }
           if (frame.type !== "stream" || !frame.event) return;
           const event = frame.event;
           if (event.type === "turn_started") {
@@ -123,13 +147,10 @@ export default function App() {
       socket?.close();
       if (timer.current) window.clearTimeout(timer.current);
     };
-  }, [sync, token]);
+  }, [name, sync, token]);
 
-  async function send(message: string, name: string) {
-    if (!name) {
-      setError("Add a display name before sending.");
-      throw new Error("display name required");
-    }
+  async function send(message: string) {
+    if (!name) return;
     if (!token) return;
     setError(null);
     try {
@@ -167,6 +188,22 @@ export default function App() {
         <p>Ask the host for a new link.</p>
       </main>
     );
+  if (!name)
+    return (
+      <div className="app onboarding-app">
+        <header className="room-header">
+          <div className="header">
+            <div className="mark" aria-hidden="true">
+              P
+            </div>
+            <div className="title-wrap">
+              <h1>{room?.label || "Shared session"}</h1>
+            </div>
+          </div>
+        </header>
+        <NameGate onContinue={setName} />
+      </div>
+    );
   const liveText =
     state === "live"
       ? "live"
@@ -194,22 +231,25 @@ export default function App() {
           </span>
         </div>
       </header>
-      <main className="timeline" aria-busy={!room}>
-        <div className="conversation">
-          <Timeline
-            items={items}
-            questions={questions}
-            onAnswer={answer}
-            answering={answering}
-          />
-          {working && (
-            <div className="working">
-              <i className="pulse" />
-              Agent is working…
-            </div>
-          )}
-        </div>
-      </main>
+      <div className="room-body">
+        <Participants participants={participants} />
+        <main className="timeline" aria-busy={!room}>
+          <div className="conversation">
+            <Timeline
+              items={items}
+              questions={questions}
+              onAnswer={answer}
+              answering={answering}
+            />
+            {working && (
+              <div className="working">
+                <i className="pulse" />
+                Agent is working…
+              </div>
+            )}
+          </div>
+        </main>
+      </div>
       <Composer onSend={send} error={error} />
     </div>
   );

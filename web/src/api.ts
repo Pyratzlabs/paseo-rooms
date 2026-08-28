@@ -12,6 +12,12 @@ export interface RoomInfo {
   questions?: RoomQuestion[];
 }
 
+export interface RoomParticipant {
+  id: string;
+  name: string;
+  role: "host" | "collaborator";
+}
+
 export interface TimelineItem {
   type: string;
   text?: string;

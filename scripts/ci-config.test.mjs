@@ -61,10 +61,13 @@ test("quality and behavior checks are separate CI jobs", () => {
   }
   for (const command of [
     "npm run test:relay",
+    "npm run test:relay-client",
+    "npm run test:name",
     "npm run test:room-ui",
     "npm run test:timeline",
     "npm run test:questions",
     "npm run test:public-events",
+    "npm run test:presence",
     "npm run test:ci",
     "npm run test:lock",
   ]) {

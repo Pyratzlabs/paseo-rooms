@@ -16,6 +16,29 @@ test("live timeline projection ignores malformed optional daemon fields", () => 
   ]);
 });
 
+test("unprefixed timeline messages are attributed to the host", () => {
+  assert.deepEqual(
+    projectTimeline([
+      { item: { type: "user_message", text: "A host note" } as never },
+      { item: { type: "user_message", text: "[Alice]\nHello" } as never },
+    ]),
+    [
+      {
+        id: "0:user_message:A host note",
+        kind: "user",
+        text: "A host note",
+        author: "Host",
+      },
+      {
+        id: "1:user_message:[Alice]\nHello",
+        kind: "user",
+        text: "Hello",
+        author: "Alice",
+      },
+    ],
+  );
+});
+
 test("live assistant chunks are coalesced until a timeline boundary", () => {
   const greeting = {
     id: "stream:0",
