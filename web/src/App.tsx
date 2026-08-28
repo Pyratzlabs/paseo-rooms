@@ -11,6 +11,7 @@ import {
   type RoomInfo,
   type RoomParticipant,
   type RoomQuestion,
+  type RoomQuestionAnswer,
   type StreamEvent,
 } from "./api";
 import {
@@ -209,6 +210,26 @@ export default function App() {
     }
   }
 
+  async function answerPrompts(
+    question: RoomQuestion,
+    answers: RoomQuestionAnswer[],
+  ) {
+    if (!token) return;
+    setAnswering(question.id);
+    setError(null);
+    try {
+      await api.answerPrompts(token, question.id, answers);
+      scrollToLatest(true);
+      setQuestions((current) =>
+        current.filter((value) => value.id !== question.id),
+      );
+    } catch {
+      setError("Those answers could not be sent. Please try again.");
+    } finally {
+      setAnswering(null);
+    }
+  }
+
   if (fatal)
     return (
       <main className="room-error">
@@ -275,6 +296,7 @@ export default function App() {
               items={items}
               questions={questions}
               onAnswer={answer}
+              onAnswerPrompts={answerPrompts}
               answering={answering}
             />
             {working && (

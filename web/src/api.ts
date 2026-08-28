@@ -3,6 +3,19 @@ export interface RoomQuestion {
   title?: string;
   description?: string;
   actions: Array<{ id: string; label?: string }>;
+  prompts: Array<{
+    question: string;
+    header: string;
+    options: Array<{ label: string; description?: string | null }>;
+    multiSelect: boolean;
+    allowOther: boolean;
+  }>;
+}
+
+export interface RoomQuestionAnswer {
+  questionIndex: number;
+  optionLabels: string[];
+  other?: string;
 }
 
 export interface RoomInfo {
@@ -69,6 +82,19 @@ export const api = {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ actionId }),
+      },
+    ),
+  answerPrompts: (
+    token: string,
+    requestId: string,
+    answers: RoomQuestionAnswer[],
+  ) =>
+    request(
+      roomPath(token, `/questions/${encodeURIComponent(requestId)}/respond`),
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ answers }),
       },
     ),
 };

@@ -306,10 +306,15 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
         if (!checkQuestionRateLimit(room.token)) return json(429, { error: "rate limit exceeded" });
         if (answeringQuestions.has(key)) return json(409, { error: "question already resolved" });
         const body = JSON.parse(req.body.toString() || "{}");
-        if (typeof body.actionId !== "string") return json(400, { error: "actionId required" });
+        const hasAction = typeof body.actionId === "string";
+        const hasAnswers = Array.isArray(body.answers);
+        if (!hasAction && !hasAnswers) return json(400, { error: "answer required" });
         answeringQuestions.add(key);
         try {
-          const answered = await answerRoomQuestion(room.agentId, requestId, body.actionId);
+          const answered = await answerRoomQuestion(room.agentId, requestId, {
+            actionId: body.actionId,
+            answers: hasAnswers ? body.answers : undefined,
+          });
           if (!answered) return json(409, { error: "question unavailable" });
           return json(202, { ok: true });
         } finally {

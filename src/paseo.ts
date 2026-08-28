@@ -5,7 +5,13 @@ import {
   type PaseoClient,
 } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
-import { canAnswerRoomQuestion, projectRoomQuestion, roomQuestionActionBehavior, type RoomQuestion } from "./questions.js";
+import {
+  buildRoomQuestionUpdatedInput,
+  projectRoomQuestion,
+  roomQuestionActionBehavior,
+  type RoomQuestion,
+  type RoomQuestionResponse,
+} from "./questions.js";
 
 const PASEO_URL = process.env.PASEO_URL ?? "ws://127.0.0.1:6767/ws";
 const PASEO_PASSWORD = process.env.PASEO_PASSWORD;
@@ -148,17 +154,29 @@ export async function listRoomQuestions(agentId: string): Promise<RoomQuestion[]
 }
 
 /** Re-read the live permission request before responding; never trust browser input. */
-export async function answerRoomQuestion(agentId: string, requestId: string, actionId: unknown): Promise<boolean> {
+export async function answerRoomQuestion(
+  agentId: string,
+  requestId: string,
+  response: { actionId?: unknown; answers?: RoomQuestionResponse["answers"] },
+): Promise<boolean> {
   const agent = await getAgentHandle(agentId);
   const snapshot = await agent.refresh();
   const request = snapshot?.agent.pendingPermissions.find((pending) => pending.id === requestId);
-  if (!request || !canAnswerRoomQuestion(request, actionId)) return false;
-  const behavior = roomQuestionActionBehavior(request, actionId);
+  if (!request) return false;
+  const updatedInput = buildRoomQuestionUpdatedInput(request, response);
+  const actionId = response.actionId;
+  const behavior = updatedInput ? "allow" : roomQuestionActionBehavior(request, actionId);
   if (!behavior) return false;
   if (!permissionClient) {
     permissionClient = new DaemonClient({ url: PASEO_URL, password: PASEO_PASSWORD, clientType: "cli", clientId: "paseo-rooms" });
     await permissionClient.connect();
   }
-  await permissionClient.respondToPermission(agentId, requestId, { behavior, selectedActionId: actionId as string });
+  await permissionClient.respondToPermission(
+    agentId,
+    requestId,
+    updatedInput
+      ? { behavior: "allow", updatedInput }
+      : { behavior, selectedActionId: actionId as string },
+  );
   return true;
 }

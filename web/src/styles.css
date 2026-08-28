@@ -364,6 +364,89 @@ h1 {
   color: var(--text-muted);
   font-size: 13px;
 }
+.prompt-questions {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+.prompt-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.prompt-tabs button {
+  min-height: 30px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-0);
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+.prompt-tabs button.active {
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+.prompt-question {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.prompt-question legend {
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.prompt-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 0;
+  cursor: pointer;
+}
+.prompt-option input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  accent-color: var(--accent);
+}
+.prompt-option span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.prompt-option small {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.other-answer {
+  width: 100%;
+  min-width: 0;
+  min-height: 38px;
+  margin: 8px 0 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-0);
+  color: var(--text);
+}
+.prompt-submit {
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.prompt-submit:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
 .question-actions {
   display: flex;
   flex-wrap: wrap;
