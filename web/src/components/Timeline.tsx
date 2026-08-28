@@ -76,7 +76,14 @@ export function Timeline({
         >
           <h2>{question.title || "The agent has a question"}</h2>
           {question.description && <p>{question.description}</p>}
-          {question.prompts.length ? (
+          {question.kind === "plan" && question.plan ? (
+            <PlanApproval
+              actions={question.actions}
+              disabled={answering === question.id}
+              onAnswer={(actionId) => onAnswer(question, actionId)}
+              plan={question.plan}
+            />
+          ) : question.prompts.length ? (
             <PromptQuestions
               question={question}
               disabled={answering === question.id}
@@ -101,6 +108,42 @@ export function Timeline({
         </section>
       ))}
     </>
+  );
+}
+
+function PlanApproval({
+  actions,
+  disabled,
+  onAnswer,
+  plan,
+}: {
+  actions: RoomQuestion["actions"];
+  disabled: boolean;
+  onAnswer: (actionId: string) => void;
+  plan: string;
+}) {
+  return (
+    <div className="plan-approval">
+      <div className="plan-markdown">
+        <Markdown text={plan} />
+      </div>
+      <p className="plan-prompt">How would you like to proceed?</p>
+      <div className="plan-actions">
+        {actions.map((action) => (
+          <button
+            className={
+              action.id === "implement" ? "plan-implement" : "plan-reject"
+            }
+            disabled={disabled}
+            key={action.id}
+            onClick={() => onAnswer(action.id)}
+            type="button"
+          >
+            {disabled ? "Sending…" : action.label}
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 
