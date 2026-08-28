@@ -50,10 +50,31 @@ test("quality and behavior checks are separate CI jobs", () => {
     "npm run typecheck:web",
     "npm run build:web",
   ]) {
-    assert.match(config, new RegExp(`^quality:[\\s\\S]*?^    - ${command.replace(/[:]/g, "\\:")}$`, "m"), `quality must run ${command}`);
+    assert.match(
+      config,
+      new RegExp(
+        `^quality:[\\s\\S]*?^    - ${command.replace(/[:]/g, "\\:")}$`,
+        "m",
+      ),
+      `quality must run ${command}`,
+    );
   }
-  for (const command of ["npm run test:relay", "npm run test:room-ui", "npm run test:questions", "npm run test:public-events", "npm run test:ci", "npm run test:lock"]) {
-    assert.match(config, new RegExp(`^tests:[\\s\\S]*?^    - ${command.replace(/[:]/g, "\\:")}$`, "m"), `tests must run ${command}`);
+  for (const command of [
+    "npm run test:relay",
+    "npm run test:room-ui",
+    "npm run test:questions",
+    "npm run test:public-events",
+    "npm run test:ci",
+    "npm run test:lock",
+  ]) {
+    assert.match(
+      config,
+      new RegExp(
+        `^tests:[\\s\\S]*?^    - ${command.replace(/[:]/g, "\\:")}$`,
+        "m",
+      ),
+      `tests must run ${command}`,
+    );
   }
   assert.equal(
     packageJson.scripts["format:check"],
