@@ -10,6 +10,29 @@ export type DisplayItem =
       todos?: Array<{ text: string; done: boolean }>;
     };
 
+/**
+ * Appends a live projection, extending the current assistant bubble only when
+ * it is another fragment of that same in-progress response.
+ */
+export function appendLiveItem(
+  items: DisplayItem[],
+  item: DisplayItem,
+  continueAssistant: boolean,
+): DisplayItem[] {
+  const previous = items.at(-1);
+  if (
+    continueAssistant &&
+    item.kind === "assistant" &&
+    previous?.kind === "assistant"
+  ) {
+    return [
+      ...items.slice(0, -1),
+      { ...previous, text: previous.text + item.text },
+    ];
+  }
+  return [...items, item];
+}
+
 const collaborator = /^\[([^\]\n]{1,40})\]\n([\s\S]*)$/;
 
 function text(value: unknown): string {

@@ -6,7 +6,12 @@ import {
   type RoomQuestion,
   type StreamEvent,
 } from "./api";
-import { projectStream, projectTimeline, type DisplayItem } from "./timeline";
+import {
+  appendLiveItem,
+  projectStream,
+  projectTimeline,
+  type DisplayItem,
+} from "./timeline";
 import { Timeline } from "./components/Timeline";
 import { Composer } from "./components/Composer";
 
@@ -30,6 +35,7 @@ export default function App() {
   const retry = useRef(1000);
   const timer = useRef<number | null>(null);
   const streamPosition = useRef(0);
+  const continueAssistant = useRef(false);
 
   const sync = useCallback(async () => {
     if (!token) return;
@@ -41,6 +47,7 @@ export default function App() {
     setQuestions(nextRoom.questions ?? []);
     setItems(projectTimeline(entries));
     setWorking(nextRoom.agent?.status === "running");
+    continueAssistant.current = false;
   }, [token]);
 
   useEffect(() => {
@@ -65,13 +72,18 @@ export default function App() {
           };
           if (frame.type !== "stream" || !frame.event) return;
           const event = frame.event;
-          if (event.type === "turn_started") setWorking(true);
+          if (event.type === "turn_started") {
+            setWorking(true);
+            continueAssistant.current = false;
+          }
           if (
             ["turn_completed", "turn_canceled", "turn_failed"].includes(
               event.type,
             )
-          )
+          ) {
             setWorking(false);
+            continueAssistant.current = false;
+          }
           if (event.type === "permission_requested" && event.request)
             setQuestions((current) =>
               current.some((question) => question.id === event.request!.id)
@@ -83,7 +95,14 @@ export default function App() {
               current.filter((question) => question.id !== event.requestId),
             );
           const projected = projectStream(event, streamPosition.current++);
-          if (projected) setItems((current) => [...current, projected]);
+          if (projected) {
+            setItems((current) =>
+              appendLiveItem(current, projected, continueAssistant.current),
+            );
+            continueAssistant.current = projected.kind === "assistant";
+          } else if (event.type !== "turn_started") {
+            continueAssistant.current = false;
+          }
         } catch {
           setError("Received an unreadable live update.");
         }
