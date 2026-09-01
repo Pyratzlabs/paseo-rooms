@@ -2,6 +2,7 @@
   "name": "paseo-rooms",
   "version": "0.1.0",
   "private": true,
+  "license": "AGPL-3.0-or-later",
   "description": "Shared Paseo rooms: relay/web application and Paseo desktop plugin",
   "workspaces": [
     "apps/*"
@@ -19,6 +20,8 @@
     "typecheck:web": "npm run typecheck:web --workspace @paseo-rooms/relay-web",
     "test:relay": "npm run test:relay --workspace @paseo-rooms/relay-web",
     "test:relay-client": "npm run test:relay-client --workspace @paseo-rooms/relay-web",
+    "test:e2ee": "npm run test:e2ee --workspace @paseo-rooms/relay-web",
+    "test:e2ee-browser": "npm run test:e2ee-browser --workspace @paseo-rooms/relay-web",
     "test:name": "npm run test:name --workspace @paseo-rooms/relay-web",
     "test:scroll": "npm run test:scroll --workspace @paseo-rooms/relay-web",
     "test:room-ui": "npm run test:room-ui --workspace @paseo-rooms/relay-web",

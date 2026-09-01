@@ -3,7 +3,23 @@ import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
-import { createRoom, deleteRoom, getAdminToken, getRoom, listRooms, timingSafeEqual, type Room } from "./rooms.js";
+import {
+  createRoom,
+  deleteRoom,
+  getAdminToken,
+  getRoom,
+  isSecureRoom,
+  listRooms,
+  publicRoomUrl,
+  relayRoutes,
+  relayTokens,
+  timingSafeEqual,
+  toPublicRoom,
+  type AnyRoom,
+  type Room,
+  type SecureRoom,
+} from "./rooms.js";
+import { closeSecureRoom, openSecureRoomSocket } from "./secure-room.js";
 import {
   startRelayClient,
   type ApiRequest,
@@ -22,12 +38,21 @@ import {
   subscribeAgent,
 } from "./paseo.js";
 import { publicStreamEvent } from "./public-events.js";
-import { parsePresenceHello, RoomPresence, sanitizeParticipantName } from "./presence.js";
+import type { RoomQuestionResponse } from "./questions.js";
+import {
+  parsePresenceHello,
+  RoomPresence,
+  sanitizeParticipantName,
+} from "./presence.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
 const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
 const BASE_HOST = new URL(BASE_URL).host;
-const PUBLIC_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "public");
+const PUBLIC_DIR = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "public",
+);
 
 const ADMIN_TOKEN = getAdminToken();
 
@@ -41,7 +66,9 @@ const questionTimestamps = new Map<string, number[]>();
 
 function checkRateLimit(token: string): boolean {
   const now = Date.now();
-  const timestamps = (messageTimestamps.get(token) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
+  const timestamps = (messageTimestamps.get(token) ?? []).filter(
+    (t) => now - t < RATE_WINDOW_MS,
+  );
   if (timestamps.length >= RATE_LIMIT) {
     messageTimestamps.set(token, timestamps);
     return false;
@@ -53,7 +80,9 @@ function checkRateLimit(token: string): boolean {
 
 function checkQuestionRateLimit(token: string): boolean {
   const now = Date.now();
-  const timestamps = (questionTimestamps.get(token) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
+  const timestamps = (questionTimestamps.get(token) ?? []).filter(
+    (t) => now - t < RATE_WINDOW_MS,
+  );
   if (timestamps.length >= RATE_LIMIT) return false;
   timestamps.push(now);
   questionTimestamps.set(token, timestamps);
@@ -81,6 +110,22 @@ function closeLiveRoom(token: string): void {
   liveRooms.delete(token);
 }
 
+async function answerQuestionOnce(
+  room: Pick<Room, "agentId" | "token">,
+  requestId: string,
+  payload: { actionId?: string; answers?: RoomQuestionResponse["answers"] },
+): Promise<boolean> {
+  const key = `${room.token}:${requestId}`;
+  if (!checkQuestionRateLimit(room.token)) return false;
+  if (answeringQuestions.has(key)) return false;
+  answeringQuestions.add(key);
+  try {
+    return await answerRoomQuestion(room.agentId, requestId, payload);
+  } finally {
+    answeringQuestions.delete(key);
+  }
+}
+
 /**
  * Attach a browser socket to a room's timeline fan-out. The socket may be a
  * local `ws` connection or a relay-forwarded virtual one — see `RoomSocket`.
@@ -88,25 +133,41 @@ function closeLiveRoom(token: string): void {
 async function joinRoom(room: Room, socket: RoomSocket): Promise<void> {
   let live = liveRooms.get(room.token);
   if (!live) {
-    live = { sockets: new Set(), presence: new RoomPresence(), unsubscribe: null };
+    live = {
+      sockets: new Set(),
+      presence: new RoomPresence(),
+      unsubscribe: null,
+    };
     liveRooms.set(room.token, live);
-    live.unsubscribe = await subscribeAgent(room.agentId, ({ event, timestamp }) => {
-      const frame = JSON.stringify({ type: "stream", event: publicStreamEvent(event), timestamp });
-      for (const ws of live!.sockets) {
-        ws.send(frame);
-      }
-    });
+    live.unsubscribe = await subscribeAgent(
+      room.agentId,
+      ({ event, timestamp }) => {
+        const frame = JSON.stringify({
+          type: "stream",
+          event: publicStreamEvent(event),
+          timestamp,
+        });
+        for (const ws of live!.sockets) {
+          ws.send(frame);
+        }
+      },
+    );
   }
   live.sockets.add(socket);
   const broadcastPresence = () => {
-    const frame = JSON.stringify({ type: "presence", participants: live!.presence.list() });
+    const frame = JSON.stringify({
+      type: "presence",
+      participants: live!.presence.list(),
+    });
     for (const ws of live!.sockets) ws.send(frame);
   };
   socket.onMessage((data) => {
     const name = parsePresenceHello(data);
     if (name && live!.presence.join(socket, name)) broadcastPresence();
   });
-  socket.send(JSON.stringify({ type: "presence", participants: live.presence.list() }));
+  socket.send(
+    JSON.stringify({ type: "presence", participants: live.presence.list() }),
+  );
   socket.onClose(() => {
     live!.sockets.delete(socket);
     if (live!.presence.leave(socket)) broadcastPresence();
@@ -125,7 +186,8 @@ function wrapWebSocket(ws: WebSocket): RoomSocket {
     },
     close: (code, reason) => ws.close(code, reason),
     onClose: (handler) => ws.on("close", handler),
-    onMessage: (handler) => ws.on("message", (data) => handler(data.toString())),
+    onMessage: (handler) =>
+      ws.on("message", (data) => handler(data.toString())),
   };
 }
 
@@ -163,12 +225,18 @@ function fileResponse(file: string, type: string): ApiResponse {
 }
 
 function landingAssetResponse(pieces: string[]): ApiResponse {
-  if (pieces.length === 0 || pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece))) return notFound();
+  if (
+    pieces.length === 0 ||
+    pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece))
+  )
+    return notFound();
   const root = path.join(PUBLIC_DIR, "landing");
   const target = path.resolve(root, ...pieces);
   if (!target.startsWith(`${root}${path.sep}`)) return notFound();
   try {
-    const type = ASSET_TYPES[path.extname(target).toLowerCase()] ?? "application/octet-stream";
+    const type =
+      ASSET_TYPES[path.extname(target).toLowerCase()] ??
+      "application/octet-stream";
     return {
       status: 200,
       headers: {
@@ -184,13 +252,26 @@ function landingAssetResponse(pieces: string[]): ApiResponse {
 
 /** Public, immutable Vite assets. They contain UI code only; room data remains token-gated. */
 function publicAssetResponse(pieces: string[]): ApiResponse {
-  if (pieces.length === 0 || pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece))) return notFound();
+  if (
+    pieces.length === 0 ||
+    pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece))
+  )
+    return notFound();
   const root = path.join(PUBLIC_DIR, "assets");
   const target = path.resolve(root, ...pieces);
   if (!target.startsWith(`${root}${path.sep}`)) return notFound();
   try {
-    const type = ASSET_TYPES[path.extname(target).toLowerCase()] ?? "application/octet-stream";
-    return { status: 200, headers: { "content-type": type, "cache-control": "public, max-age=31536000, immutable" }, body: fs.readFileSync(target) };
+    const type =
+      ASSET_TYPES[path.extname(target).toLowerCase()] ??
+      "application/octet-stream";
+    return {
+      status: 200,
+      headers: {
+        "content-type": type,
+        "cache-control": "public, max-age=31536000, immutable",
+      },
+      body: fs.readFileSync(target),
+    };
   } catch {
     return notFound();
   }
@@ -222,7 +303,11 @@ const ASSET_TYPES: Record<string, string> = {
 };
 
 function notFound(): ApiResponse {
-  return { status: 404, headers: { "content-type": "text/plain; charset=utf-8" }, body: Buffer.from("not found") };
+  return {
+    status: 404,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+    body: Buffer.from("not found"),
+  };
 }
 
 // ---- routes ----------------------------------------------------------------
@@ -280,9 +365,17 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       if (!agentId) return json(400, { error: "agentId required" });
       const info = await agentInfo(agentId);
       if (!info) return json(404, { error: "no such agent" });
-      const room = createRoom(agentId, typeof body.label === "string" ? body.label : info.title ?? "Shared session");
-      relayClient?.register([room.token]);
-      return json(201, { token: room.token, url: `${BASE_URL}/r/${room.token}` });
+      const room = createRoom(
+        agentId,
+        typeof body.label === "string"
+          ? body.label
+          : (info.title ?? "Shared session"),
+      );
+      relayClient?.registerRoutes([{ token: room.token, protocol: 2 }]);
+      return json(201, {
+        token: room.token,
+        url: publicRoomUrl(room, BASE_URL),
+      });
     }
 
     // GET /api/rooms — admin only: list rooms
@@ -290,19 +383,26 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       if (!checkAdmin()) return json(401, { error: "unauthorized" });
       return json(200, {
         rooms: listRooms().map((room) => ({
-          ...room,
-          url: `${BASE_URL}/r/${room.token}`,
+          ...toPublicRoom(room),
+          url: publicRoomUrl(room, BASE_URL),
         })),
       });
     }
 
     // DELETE /api/rooms/<token> — admin only: revoke a room
-    if (req.method === "DELETE" && parts[0] === "api" && parts[1] === "rooms" && parts.length === 3) {
+    if (
+      req.method === "DELETE" &&
+      parts[0] === "api" &&
+      parts[1] === "rooms" &&
+      parts.length === 3
+    ) {
       if (!checkAdmin()) return json(401, { error: "unauthorized" });
       const existed = deleteRoom(parts[2]);
       if (!existed) return json(404, { error: "unknown room" });
       closeLiveRoom(parts[2]);
+      closeSecureRoom(parts[2]);
       relayClient?.unregister([parts[2]]);
+      relayClient?.unregisterRoutes([{ token: parts[2], protocol: 2 }]);
       return json(200, { ok: true });
     }
 
@@ -310,6 +410,7 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
     if (parts[0] === "api" && parts[1] === "rooms" && parts.length >= 3) {
       const room = getRoom(parts[2]);
       if (!room) return json(404, { error: "unknown room" });
+      if (isSecureRoom(room)) return notFound();
       const rest = parts.slice(3).join("/");
 
       if (req.method === "GET" && rest === "") {
@@ -317,7 +418,13 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
         return json(200, {
           label: room.label,
           createdAt: room.createdAt,
-          agent: info ? { title: info.title, status: info.status, provider: info.provider } : null,
+          agent: info
+            ? {
+                title: info.title,
+                status: info.status,
+                provider: info.provider,
+              }
+            : null,
           questions: await listRoomQuestions(room.agentId),
         });
       }
@@ -329,30 +436,25 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
 
       if (req.method === "POST" && /^questions\/[^/]+\/respond$/.test(rest)) {
         const requestId = rest.split("/")[1];
-        const key = `${room.token}:${requestId}`;
-        if (!checkQuestionRateLimit(room.token)) return json(429, { error: "rate limit exceeded" });
-        if (answeringQuestions.has(key)) return json(409, { error: "question already resolved" });
         const body = JSON.parse(req.body.toString() || "{}");
         const hasAction = typeof body.actionId === "string";
         const hasAnswers = Array.isArray(body.answers);
-        if (!hasAction && !hasAnswers) return json(400, { error: "answer required" });
-        answeringQuestions.add(key);
-        try {
-          const answered = await answerRoomQuestion(room.agentId, requestId, {
-            actionId: body.actionId,
-            answers: hasAnswers ? body.answers : undefined,
-          });
-          if (!answered) return json(409, { error: "question unavailable" });
-          return json(202, { ok: true });
-        } finally {
-          answeringQuestions.delete(key);
-        }
+        if (!hasAction && !hasAnswers)
+          return json(400, { error: "answer required" });
+        const answered = await answerQuestionOnce(room, requestId, {
+          actionId: body.actionId,
+          answers: hasAnswers ? body.answers : undefined,
+        });
+        if (!answered) return json(409, { error: "question unavailable" });
+        return json(202, { ok: true });
       }
 
       if (req.method === "POST" && rest === "messages") {
-        if (!checkRateLimit(room.token)) return json(429, { error: "rate limit exceeded" });
+        if (!checkRateLimit(room.token))
+          return json(429, { error: "rate limit exceeded" });
         const body = JSON.parse(req.body.toString() || "{}");
-        const message = typeof body.message === "string" ? body.message.trim() : "";
+        const message =
+          typeof body.message === "string" ? body.message.trim() : "";
         if (!message) return json(400, { error: "message required" });
         const name = sanitizeParticipantName(body.name);
         // The room's mapping is the only routing authority: any agent_id in the
@@ -366,7 +468,9 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
 
     return notFound();
   } catch (err) {
-    return json(500, { error: err instanceof Error ? err.message : "internal error" });
+    return json(500, {
+      error: err instanceof Error ? err.message : "internal error",
+    });
   }
 }
 
@@ -375,14 +479,34 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
  * token is unknown or the daemon is down (caller answers 404). Used by the
  * local upgrade path and by relay-forwarded `ws_event: open` frames alike.
  */
-export async function openRoomSocket(requestPath: string, socket: RoomSocket): Promise<boolean> {
+export async function openRoomSocket(
+  requestPath: string,
+  socket: RoomSocket,
+): Promise<boolean> {
   if (!isConnected()) return false;
   const url = new URL(requestPath, BASE_URL);
   const match = url.pathname.match(/^\/api\/rooms\/([^/]+)\/ws$/);
   const room = match ? getRoom(match[1]) : undefined;
-  if (!room) return false;
+  if (!room || isSecureRoom(room)) return false;
   await joinRoom(room, socket);
   return true;
+}
+
+export async function openAnyRoomSocket(
+  requestPath: string,
+  socket: RoomSocket,
+): Promise<boolean> {
+  if (!isConnected()) return false;
+  if (requestPath.startsWith("/v2/rooms/")) {
+    return openSecureRoomSocket(
+      requestPath,
+      socket,
+      checkRateLimit,
+      (room: SecureRoom, questionId, payload) =>
+        answerQuestionOnce(room, questionId, payload),
+    );
+  }
+  return openRoomSocket(requestPath, socket);
 }
 
 // ---- local HTTP listener ---------------------------------------------------
@@ -394,12 +518,16 @@ const server = http.createServer(async (req, res) => {
       method: req.method ?? "GET",
       path: req.url ?? "/",
       headers: Object.fromEntries(
-        Object.entries(req.headers).flatMap(([k, v]) => (typeof v === "string" ? [[k, v] as [string, string]] : [])),
+        Object.entries(req.headers).flatMap(([k, v]) =>
+          typeof v === "string" ? [[k, v] as [string, string]] : [],
+        ),
       ),
       body: await readBody(req),
     });
   } catch (err) {
-    response = json(500, { error: err instanceof Error ? err.message : "internal error" });
+    response = json(500, {
+      error: err instanceof Error ? err.message : "internal error",
+    });
   }
   res.writeHead(response.status, response.headers);
   res.end(response.body);
@@ -428,15 +556,28 @@ server.on("upgrade", (req, socket, head) => {
     return;
   }
   const url = new URL(req.url ?? "/", BASE_URL);
+  if (url.pathname.startsWith("/v2/rooms/")) {
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      openAnyRoomSocket(req.url ?? url.pathname, wrapWebSocket(ws)).then(
+        (accepted) => {
+          if (!accepted) ws.close(1008, "room unavailable");
+        },
+        () => ws.close(1011, "subscription failed"),
+      );
+    });
+    return;
+  }
   const match = url.pathname.match(/^\/api\/rooms\/([^/]+)\/ws$/);
   const room = match ? getRoom(match[1]) : undefined;
-  if (!room) {
+  if (!room || isSecureRoom(room)) {
     socket.write("HTTP/1.1 404 Not Found\r\n\r\n");
     socket.destroy();
     return;
   }
   wss.handleUpgrade(req, socket, head, (ws) => {
-    joinRoom(room, wrapWebSocket(ws)).catch(() => ws.close(1011, "subscription failed"));
+    joinRoom(room, wrapWebSocket(ws)).catch(() =>
+      ws.close(1011, "subscription failed"),
+    );
   });
 });
 
@@ -448,16 +589,19 @@ const RELAY_URL = process.env.RELAY_URL;
 const RELAY_KEY = process.env.RELAY_KEY;
 if (RELAY_URL) {
   if (!RELAY_KEY) {
-    console.error("RELAY_URL is set but RELAY_KEY is missing — not dialling out to the relay");
+    console.error(
+      "RELAY_URL is set but RELAY_KEY is missing — not dialling out to the relay",
+    );
   } else {
     relayClient = startRelayClient({
       url: RELAY_URL,
       key: RELAY_KEY,
       minBackoffMs: Number(process.env.RELAY_MIN_BACKOFF_MS ?? 1_000),
       maxBackoffMs: Number(process.env.RELAY_MAX_BACKOFF_MS ?? 30_000),
-      currentTokens: () => listRooms().map((r) => r.token),
+      currentTokens: relayTokens,
+      currentRoutes: relayRoutes,
       handleRequest: handleApiRequest,
-      openSocket: openRoomSocket,
+      openSocket: openAnyRoomSocket,
     });
   }
 }
@@ -467,7 +611,9 @@ if (RELAY_URL) {
 // background. API routes respond 503 until connected.
 server.listen(PORT, () => {
   console.log(`paseo-rooms listening on ${BASE_URL}`);
-  console.log(`admin token: data/admin-token (create rooms with "npm run share -- <agent-id>")`);
+  console.log(
+    `admin token: data/admin-token (create rooms with "npm run share -- <agent-id>")`,
+  );
 });
 ensureConnected().then(() => {
   console.log("connected to Paseo daemon");

@@ -3,8 +3,9 @@
  * laptop room server claimed the room token. Implements "Relay protocol v1"
  * (docs/plan.md). Routing is in-memory only: on restart, laptops re-register.
  *
- * The relay never sees daemon credentials, agent ids, or conversation content
- * it can interpret — it moves opaque bytes between a token and a connection.
+ * The relay never sees daemon credentials or agent IDs. v1 room payloads remain
+ * plaintext to the relay; v2 route work below only establishes the opaque
+ * transport boundary that later encrypted room records will use.
  */
 
 import http from "node:http";
@@ -15,11 +16,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   MAX_BODY_BYTES,
+  MAX_HOST_CONTROL_BYTES,
+  MAX_V2_RECORD_BYTES,
   FORWARDED_REQUEST_HEADERS,
+  frameRoutes,
   matchPublicRoute,
   parseLaptopFrame,
+  parseV2OuterRecord,
   type HttpResponseFrame,
   type RelayFrame,
+  type RoomProtocolVersion,
 } from "./protocol.js";
 
 export interface RelayOptions {
@@ -42,7 +48,12 @@ export interface Relay {
 }
 
 const MISSED_PONG_LIMIT = 2;
-const PUBLIC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "public");
+const PUBLIC_DIR = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  "public",
+);
 
 const ASSET_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
@@ -55,13 +66,24 @@ const ASSET_TYPES: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
-function safeAsset(res: http.ServerResponse, directory: string, pieces: string[], cacheControl: string): boolean {
-  if (pieces.length === 0 || pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece))) return false;
+function safeAsset(
+  res: http.ServerResponse,
+  directory: string,
+  pieces: string[],
+  cacheControl: string,
+): boolean {
+  if (
+    pieces.length === 0 ||
+    pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece))
+  )
+    return false;
   const root = path.join(PUBLIC_DIR, directory);
   const target = path.resolve(root, ...pieces);
   if (!target.startsWith(`${root}${path.sep}`)) return false;
   try {
-    const type = ASSET_TYPES[path.extname(target).toLowerCase()] ?? "application/octet-stream";
+    const type =
+      ASSET_TYPES[path.extname(target).toLowerCase()] ??
+      "application/octet-stream";
     res.writeHead(200, { "content-type": type, "cache-control": cacheControl });
     res.end(fs.readFileSync(target));
     return true;
@@ -72,7 +94,10 @@ function safeAsset(res: http.ServerResponse, directory: string, pieces: string[]
 
 function staticDocument(res: http.ServerResponse, file: string): boolean {
   try {
-    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" });
+    res.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-cache",
+    });
     res.end(fs.readFileSync(path.join(PUBLIC_DIR, file)));
     return true;
   } catch {
@@ -86,11 +111,16 @@ interface PendingRequest {
   timer: NodeJS.Timeout;
 }
 
+interface BrowserConnection {
+  ws: WebSocket;
+  protocol: RoomProtocolVersion;
+}
+
 /** One laptop room server's outbound connection, plus everything it owns. */
 class HostConnection {
-  readonly tokens = new Set<string>();
+  readonly tokens = new Map<string, RoomProtocolVersion>();
   readonly pending = new Map<string, PendingRequest>();
-  readonly browsers = new Map<string, WebSocket>();
+  readonly browsers = new Map<string, BrowserConnection>();
   missedPongs = 0;
 
   constructor(
@@ -115,23 +145,32 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
 
   /** token -> owning laptop connection. The relay's entire routing table. */
   const routes = new Map<string, HostConnection>();
+  const routeProtocols = new Map<string, RoomProtocolVersion>();
   const hosts = new Set<HostConnection>();
   let hostSeq = 0;
   let idSeq = 0;
   const nextId = (): string => `${++idSeq}`;
 
-  function routeFor(token: string): HostConnection | undefined {
+  function routeFor(
+    token: string,
+  ): { host: HostConnection; protocol: RoomProtocolVersion } | undefined {
     const host = routes.get(token);
     if (host && !host.alive) {
       routes.delete(token);
+      routeProtocols.delete(token);
       return undefined;
     }
-    return host;
+    const protocol = routeProtocols.get(token);
+    return host && protocol ? { host, protocol } : undefined;
   }
 
   // ---- host (laptop) side --------------------------------------------------
 
-  const hostWss = new WebSocketServer({ noServer: true });
+  const hostWss = new WebSocketServer({
+    noServer: true,
+    perMessageDeflate: false,
+    maxPayload: MAX_HOST_CONTROL_BYTES,
+  });
 
   function onHostConnection(ws: WebSocket): void {
     const host = new HostConnection(++hostSeq, ws);
@@ -139,26 +178,50 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
     log(`[relay] host #${host.id} connected`);
 
     ws.on("message", (data) => {
-      const frame = parseLaptopFrame(typeof data === "string" ? data : data.toString());
+      const frame = parseLaptopFrame(
+        typeof data === "string" ? data : data.toString(),
+      );
       if (!frame) return;
 
       switch (frame.type) {
         case "register":
-          for (const token of frame.tokens) {
-            const owner = routes.get(token);
+          for (const route of frameRoutes(frame)) {
+            const owner = routes.get(route.token);
+            const protocol = routeProtocols.get(route.token);
             if (owner && owner !== host && owner.alive) {
-              log(`[relay] host #${host.id} register rejected for token ${token} (claimed by #${owner.id})`);
-              host.send({ v: 1, type: "register_rejected", token });
+              log(
+                `[relay] host #${host.id} register rejected for token ${route.token} (claimed by #${owner.id})`,
+              );
+              host.send({
+                v: 1,
+                type: "register_rejected",
+                token: route.token,
+              });
               continue;
             }
-            routes.set(token, host);
-            host.tokens.add(token);
+            if (owner === host && protocol && protocol !== route.protocol) {
+              log(
+                `[relay] host #${host.id} register rejected for token ${route.token} (protocol changed)`,
+              );
+              host.send({
+                v: 1,
+                type: "register_rejected",
+                token: route.token,
+              });
+              continue;
+            }
+            routes.set(route.token, host);
+            routeProtocols.set(route.token, route.protocol);
+            host.tokens.set(route.token, route.protocol);
           }
           break;
 
         case "unregister":
-          for (const token of frame.tokens) {
-            if (routes.get(token) === host) routes.delete(token);
+          for (const { token } of frameRoutes(frame)) {
+            if (routes.get(token) === host) {
+              routes.delete(token);
+              routeProtocols.delete(token);
+            }
             host.tokens.delete(token);
           }
           break;
@@ -176,15 +239,25 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
           const browser = host.browsers.get(frame.id);
           if (!browser) return;
           if (frame.event === "message") {
-            if (browser.readyState === WebSocket.OPEN && frame.dataB64 !== undefined) {
+            if (
+              browser.ws.readyState === WebSocket.OPEN &&
+              frame.dataB64 !== undefined
+            ) {
               // RoomSocket.send accepts JSON text. Passing a Buffer here turns
               // it into a binary WebSocket frame, which browsers expose as a
               // Blob rather than the string expected by the room renderer.
-              browser.send(Buffer.from(frame.dataB64, "base64").toString("utf8"));
+              const data = Buffer.from(frame.dataB64, "base64").toString(
+                "utf8",
+              );
+              if (browser.protocol === 2 && !parseV2OuterRecord(data)) {
+                browser.ws.close(1003, "invalid v2 record");
+                return;
+              }
+              browser.ws.send(data);
             }
           } else if (frame.event === "close") {
             host.browsers.delete(frame.id);
-            browser.close(1000, "room closed");
+            browser.ws.close(1000, "room closed");
           }
           break;
         }
@@ -197,8 +270,11 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
 
     const teardown = (): void => {
       if (!hosts.delete(host)) return;
-      for (const token of host.tokens) {
-        if (routes.get(token) === host) routes.delete(token);
+      for (const token of host.tokens.keys()) {
+        if (routes.get(token) === host) {
+          routes.delete(token);
+          routeProtocols.delete(token);
+        }
       }
       host.tokens.clear();
       for (const pending of host.pending.values()) {
@@ -207,7 +283,7 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
       }
       host.pending.clear();
       for (const browser of host.browsers.values()) {
-        browser.close(1001, "laptop disconnected");
+        browser.ws.close(1001, "laptop disconnected");
       }
       host.browsers.clear();
       log(`[relay] host #${host.id} disconnected`);
@@ -249,7 +325,11 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
     });
   }
 
-  function plain(res: http.ServerResponse, status: number, message: string): void {
+  function plain(
+    res: http.ServerResponse,
+    status: number,
+    message: string,
+  ): void {
     if (res.headersSent) return;
     res.writeHead(status, { "content-type": "text/plain; charset=utf-8" });
     res.end(message);
@@ -263,24 +343,44 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
       // Presentation belongs to the public relay. Dynamic room calls below
       // remain routed to the laptop that owns the capability token.
       if (req.method === "GET" && url.pathname === "/") {
-        return void (staticDocument(res, "index.html") || plain(res, 404, "not found"));
+        return void (
+          staticDocument(res, "index.html") || plain(res, 404, "not found")
+        );
       }
       if (req.method === "GET" && parts[0] === "landing") {
-        return void (safeAsset(res, "landing", parts.slice(1), "public, max-age=31536000, immutable") || plain(res, 404, "not found"));
+        return void (
+          safeAsset(
+            res,
+            "landing",
+            parts.slice(1),
+            "public, max-age=31536000, immutable",
+          ) || plain(res, 404, "not found")
+        );
       }
       if (req.method === "GET" && parts[0] === "assets") {
-        return void (safeAsset(res, "assets", parts.slice(1), "public, max-age=31536000, immutable") || plain(res, 404, "not found"));
+        return void (
+          safeAsset(
+            res,
+            "assets",
+            parts.slice(1),
+            "public, max-age=31536000, immutable",
+          ) || plain(res, 404, "not found")
+        );
       }
       if (req.method === "GET" && parts[0] === "r" && parts.length === 2) {
         if (!routeFor(parts[1])) return plain(res, 404, "not found");
-        return void (staticDocument(res, "room.html") || plain(res, 404, "not found"));
+        return void (
+          staticDocument(res, "room.html") || plain(res, 404, "not found")
+        );
       }
 
       const route = matchPublicRoute(url.pathname, false);
       if (!route) return plain(res, 404, "not found");
 
-      const host = routeFor(route.token);
-      if (!host) return plain(res, 404, "not found");
+      const claim = routeFor(route.token);
+      if (!claim || claim.protocol !== route.protocol)
+        return plain(res, 404, "not found");
+      const { host } = claim;
 
       const body = await readBody(req);
       if (body === null) return plain(res, 413, "payload too large");
@@ -344,7 +444,11 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
 
   // ---- browser side: WebSocket + host upgrade ------------------------------
 
-  const browserWss = new WebSocketServer({ noServer: true });
+  const browserWss = new WebSocketServer({
+    noServer: true,
+    perMessageDeflate: false,
+    maxPayload: MAX_V2_RECORD_BYTES,
+  });
 
   function refuse(socket: Duplex, status: number, reason: string): void {
     socket.write(`HTTP/1.1 ${status} ${reason}\r\nConnection: close\r\n\r\n`);
@@ -366,13 +470,21 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
 
     const route = matchPublicRoute(url.pathname, true);
     if (!route) return refuse(socket, 404, "Not Found");
-    const host = routeFor(route.token);
-    if (!host) return refuse(socket, 404, "Not Found");
+    const claim = routeFor(route.token);
+    if (!claim || claim.protocol !== route.protocol)
+      return refuse(socket, 404, "Not Found");
+    const { host } = claim;
 
     browserWss.handleUpgrade(req, socket, head, (ws) => {
       const id = nextId();
-      host.browsers.set(id, ws);
-      host.send({ v: 1, type: "ws_event", id, event: "open", path: req.url ?? url.pathname });
+      host.browsers.set(id, { ws, protocol: route.protocol });
+      host.send({
+        v: 1,
+        type: "ws_event",
+        id,
+        event: "open",
+        path: req.url ?? url.pathname,
+      });
 
       ws.on("message", (data, isBinary) => {
         const buf = Buffer.isBuffer(data)
@@ -380,8 +492,23 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
           : Array.isArray(data)
             ? Buffer.concat(data)
             : Buffer.from(data as ArrayBuffer);
-        void isBinary;
-        host.send({ v: 1, type: "ws_event", id, event: "message", dataB64: buf.toString("base64") });
+        if (route.protocol === 2) {
+          if (
+            isBinary ||
+            buf.byteLength > MAX_V2_RECORD_BYTES ||
+            !parseV2OuterRecord(buf.toString("utf8"))
+          ) {
+            ws.close(1003, "invalid v2 record");
+            return;
+          }
+        }
+        host.send({
+          v: 1,
+          type: "ws_event",
+          id,
+          event: "message",
+          dataB64: buf.toString("base64"),
+        });
       });
 
       const closeUp = (): void => {
@@ -398,7 +525,9 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
   const heartbeat = setInterval(() => {
     for (const host of hosts) {
       if (host.missedPongs >= MISSED_PONG_LIMIT) {
-        log(`[relay] host #${host.id} missed ${host.missedPongs} pongs, dropping`);
+        log(
+          `[relay] host #${host.id} missed ${host.missedPongs} pongs, dropping`,
+        );
         host.ws.terminate();
         continue;
       }
@@ -412,7 +541,8 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
     server.once("error", reject);
     server.listen(options.port ?? 8080, () => {
       const address = server.address();
-      const port = typeof address === "object" && address !== null ? address.port : 0;
+      const port =
+        typeof address === "object" && address !== null ? address.port : 0;
       resolve({
         port,
         server,
@@ -422,13 +552,15 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
             for (const host of hosts) {
               // Browser sockets are upgraded connections: `server.close()` will
               // not complete while they are open, so drop them explicitly.
-              for (const browser of host.browsers.values()) browser.terminate();
+              for (const browser of host.browsers.values())
+                browser.ws.terminate();
               host.browsers.clear();
               host.ws.terminate();
             }
             for (const browser of browserWss.clients) browser.terminate();
             hosts.clear();
             routes.clear();
+            routeProtocols.clear();
             hostWss.close();
             browserWss.close();
             server.close(() => done());
@@ -442,12 +574,15 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
 // ---- entry point -----------------------------------------------------------
 
 const isEntry =
-  process.argv[1] !== undefined && pathToFileURL(process.argv[1]).href === import.meta.url;
+  process.argv[1] !== undefined &&
+  pathToFileURL(process.argv[1]).href === import.meta.url;
 
 if (isEntry) {
   const relayKey = process.env.RELAY_KEY;
   if (!relayKey) {
-    console.error("RELAY_KEY is required (shared secret between relay and laptop room servers)");
+    console.error(
+      "RELAY_KEY is required (shared secret between relay and laptop room servers)",
+    );
     process.exit(1);
   }
   const port = Number(process.env.RELAY_PORT ?? 8080);
@@ -456,7 +591,10 @@ if (isEntry) {
       console.log(`[relay] listening on :${relay.port} (host endpoint /host)`);
     })
     .catch((err: unknown) => {
-      console.error("[relay] failed to start:", err instanceof Error ? err.message : err);
+      console.error(
+        "[relay] failed to start:",
+        err instanceof Error ? err.message : err,
+      );
       process.exit(1);
     });
 }

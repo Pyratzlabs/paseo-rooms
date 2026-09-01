@@ -25,6 +25,11 @@ import { Composer } from "./components/Composer";
 import { NameGate } from "./components/NameGate";
 import { Participants } from "./components/Participants";
 import { shouldFollowTimeline } from "./scroll";
+import {
+  connectSecureRoom,
+  secureInviteFromLocation,
+  type SecureEvent,
+} from "./secure-room-client";
 
 function tokenFromPath(): string | null {
   const parts = location.pathname.split("/").filter(Boolean);
@@ -43,6 +48,10 @@ function isParticipant(value: unknown): value is RoomParticipant {
 
 export default function App() {
   const token = tokenFromPath();
+  const secureInvite = useRef(secureInviteFromLocation(token));
+  const secureSession = useRef<Awaited<
+    ReturnType<typeof connectSecureRoom>
+  > | null>(null);
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [items, setItems] = useState<DisplayItem[]>([]);
   const [questions, setQuestions] = useState<RoomQuestion[]>([]);
@@ -75,6 +84,44 @@ export default function App() {
     });
   }, []);
 
+  const applyLiveFrame = useCallback((frame: SecureEvent) => {
+    if (frame.type === "presence" && Array.isArray(frame.participants)) {
+      setParticipants(frame.participants.filter(isParticipant));
+      return;
+    }
+    if (frame.type !== "stream" || !frame.event) return;
+    const event = frame.event;
+    if (event.type === "turn_started") {
+      setWorking(true);
+      continueAssistant.current = false;
+    }
+    if (
+      ["turn_completed", "turn_canceled", "turn_failed"].includes(event.type)
+    ) {
+      setWorking(false);
+      continueAssistant.current = false;
+    }
+    if (event.type === "permission_requested" && event.request)
+      setQuestions((current) =>
+        current.some((question) => question.id === event.request!.id)
+          ? current
+          : [...current, event.request!],
+      );
+    if (event.type === "permission_resolved" && event.requestId)
+      setQuestions((current) =>
+        current.filter((question) => question.id !== event.requestId),
+      );
+    const projected = projectStream(event, streamPosition.current++);
+    if (projected) {
+      setItems((current) =>
+        appendLiveItem(current, projected, continueAssistant.current),
+      );
+      continueAssistant.current = projected.kind === "assistant";
+    } else if (event.type !== "turn_started") {
+      continueAssistant.current = false;
+    }
+  }, []);
+
   useLayoutEffect(() => {
     if (!name || (items.length === 0 && questions.length === 0 && !working))
       return;
@@ -83,6 +130,7 @@ export default function App() {
 
   const sync = useCallback(async () => {
     if (!token) return;
+    if (secureInvite.current) return;
     const [nextRoom, entries] = await Promise.all([
       api.room(token),
       api.history(token),
@@ -103,6 +151,36 @@ export default function App() {
     let socket: WebSocket | null = null;
     const connect = () => {
       if (!name) return;
+      if (secureInvite.current) {
+        void connectSecureRoom(secureInvite.current, name, {
+          onWelcome(welcome) {
+            retry.current = 1000;
+            setState("live");
+            setRoom(welcome.room);
+            setQuestions(welcome.room.questions ?? []);
+            setParticipants(welcome.participants.filter(isParticipant));
+            setItems(projectTimeline(welcome.history));
+            setWorking(welcome.working);
+            continueAssistant.current = false;
+          },
+          onEvent: applyLiveFrame,
+          onClose() {
+            if (disposed) return;
+            setState("reconnecting");
+            secureSession.current = null;
+            timer.current = window.setTimeout(connect, retry.current);
+            retry.current = Math.min(retry.current * 2, 15_000);
+          },
+          onError() {
+            setError("Received an unreadable live update.");
+          },
+        })
+          .then((session) => {
+            secureSession.current = session;
+          })
+          .catch(() => !disposed && setFatal(true));
+        return;
+      }
       socket = roomSocket(token);
       socket.onopen = () => {
         retry.current = 1000;
@@ -118,42 +196,14 @@ export default function App() {
             participants?: unknown[];
           };
           if (frame.type === "presence" && Array.isArray(frame.participants)) {
-            setParticipants(frame.participants.filter(isParticipant));
+            applyLiveFrame({
+              type: "presence",
+              participants: frame.participants.filter(isParticipant),
+            });
             return;
           }
-          if (frame.type !== "stream" || !frame.event) return;
-          const event = frame.event;
-          if (event.type === "turn_started") {
-            setWorking(true);
-            continueAssistant.current = false;
-          }
-          if (
-            ["turn_completed", "turn_canceled", "turn_failed"].includes(
-              event.type,
-            )
-          ) {
-            setWorking(false);
-            continueAssistant.current = false;
-          }
-          if (event.type === "permission_requested" && event.request)
-            setQuestions((current) =>
-              current.some((question) => question.id === event.request!.id)
-                ? current
-                : [...current, event.request!],
-            );
-          if (event.type === "permission_resolved" && event.requestId)
-            setQuestions((current) =>
-              current.filter((question) => question.id !== event.requestId),
-            );
-          const projected = projectStream(event, streamPosition.current++);
-          if (projected) {
-            setItems((current) =>
-              appendLiveItem(current, projected, continueAssistant.current),
-            );
-            continueAssistant.current = projected.kind === "assistant";
-          } else if (event.type !== "turn_started") {
-            continueAssistant.current = false;
-          }
+          if (frame.type === "stream" && frame.event)
+            applyLiveFrame({ type: "stream", event: frame.event });
         } catch {
           setError("Received an unreadable live update.");
         }
@@ -172,16 +222,24 @@ export default function App() {
     return () => {
       disposed = true;
       socket?.close();
+      secureSession.current?.close();
+      secureSession.current = null;
       if (timer.current) window.clearTimeout(timer.current);
     };
-  }, [name, sync, token]);
+  }, [applyLiveFrame, name, sync, token]);
 
   async function send(message: string) {
     if (!name) return;
     if (!token) return;
     setError(null);
     try {
-      await api.message(token, message, name);
+      if (secureInvite.current) {
+        const session = secureSession.current;
+        if (!session) throw new Error("secure room is not ready");
+        await session.sendMessage(message);
+      } else {
+        await api.message(token, message, name);
+      }
       scrollToLatest(true);
     } catch (cause) {
       setError(
@@ -198,7 +256,13 @@ export default function App() {
     setAnswering(question.id);
     setError(null);
     try {
-      await api.answer(token, question.id, actionId);
+      if (secureInvite.current) {
+        const session = secureSession.current;
+        if (!session) throw new Error("secure room is not ready");
+        await session.answer(question.id, actionId);
+      } else {
+        await api.answer(token, question.id, actionId);
+      }
       scrollToLatest(true);
       setQuestions((current) =>
         current.filter((value) => value.id !== question.id),
@@ -218,7 +282,13 @@ export default function App() {
     setAnswering(question.id);
     setError(null);
     try {
-      await api.answerPrompts(token, question.id, answers);
+      if (secureInvite.current) {
+        const session = secureSession.current;
+        if (!session) throw new Error("secure room is not ready");
+        await session.answerPrompts(question.id, answers);
+      } else {
+        await api.answerPrompts(token, question.id, answers);
+      }
       scrollToLatest(true);
       setQuestions((current) =>
         current.filter((value) => value.id !== question.id),
