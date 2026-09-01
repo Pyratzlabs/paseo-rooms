@@ -1,0 +1,62 @@
+spec:
+  inputs:
+    review_stage:
+      default: test
+    qa_stage:
+      default: test
+    review_wait_timeout_seconds:
+      type: number
+      default: 6000
+    qa_wait_timeout_seconds:
+      type: number
+      default: 7200
+---
+variables:
+  CODE_VOUCHER_PROVIDER: "gitlab"
+  CODE_VOUCHER_PROJECT_ID: "$CI_PROJECT_ID"
+  CODE_VOUCHER_SHA: "$CI_COMMIT_SHA"
+  CODE_VOUCHER_REVIEW_ALLOW_FAILURE: "false"
+  CODE_VOUCHER_QA_ALLOW_FAILURE: "true"
+
+.code-voucher-bridge:
+  image: "registry.gitlab.com/pyratzlabs/oss/code-voucher-ci-bridge:v0.1.5@sha256:e49b241a9396ae17a29e033179ca67299f59e1e7fb425afa8772cb4fbb169ebc"
+  before_script: []
+  cache: []
+  timeout: 130m
+  variables:
+    GIT_STRATEGY: none
+    PYTHONUNBUFFERED: "1"
+  script:
+    - test -n "$CODE_VOUCHER_ID_TOKEN"
+    - test -n "$CODE_VOUCHER_BASE_URL"
+    - /opt/code-voucher/code-voucher-ci wait --stage "$CODE_VOUCHER_STAGE" --change-number "$CI_MERGE_REQUEST_IID" --timeout-seconds "$CODE_VOUCHER_WAIT_TIMEOUT_SECONDS"
+
+"code-voucher:review":
+  extends: .code-voucher-bridge
+  stage: $[[ inputs.review_stage ]]
+  variables:
+    CODE_VOUCHER_STAGE: "review"
+    CODE_VOUCHER_WAIT_TIMEOUT_SECONDS: "$[[ inputs.review_wait_timeout_seconds ]]"
+  id_tokens:
+    CODE_VOUCHER_ID_TOKEN:
+      aud: "https://code-voucher.dev/ci/review"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_PROJECT_ID && $CODE_VOUCHER_REVIEW_ALLOW_FAILURE == "true"'
+      allow_failure: true
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_PROJECT_ID'
+      allow_failure: false
+
+"code-voucher:agentic-qa":
+  extends: .code-voucher-bridge
+  stage: $[[ inputs.qa_stage ]]
+  variables:
+    CODE_VOUCHER_STAGE: "agentic_qa"
+    CODE_VOUCHER_WAIT_TIMEOUT_SECONDS: "$[[ inputs.qa_wait_timeout_seconds ]]"
+  id_tokens:
+    CODE_VOUCHER_ID_TOKEN:
+      aud: "https://code-voucher.dev/ci/agentic-qa"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_PROJECT_ID && $CODE_VOUCHER_QA_ALLOW_FAILURE == "false"'
+      allow_failure: false
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && $CI_MERGE_REQUEST_SOURCE_PROJECT_ID == $CI_PROJECT_ID'
+      allow_failure: true
