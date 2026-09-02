@@ -5,7 +5,7 @@
   "description": "Paseo Rooms local room server, public relay, and shared web UI",
   "type": "module",
   "scripts": {
-    "start": "npm --prefix ../docs run build && npm run build:web && tsx src/server.ts",
+    "start": "npm --prefix ../docs run build && npm run build:web && tsx src/server-cli.ts",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
     "format": "prettier --write eslint.config.js package.json scripts/ci-config.test.mjs web",
@@ -18,6 +18,7 @@
     "typecheck": "tsc --noEmit",
     "relay": "tsx src/relay/relay.ts",
     "test:relay": "node --import tsx --test scripts/relay-protocol.test.ts",
+    "test:local-server": "node --import tsx --test scripts/local-server-lifecycle.test.ts",
     "test:relay-client": "node --import tsx --test scripts/relay-client.test.ts",
     "test:e2ee": "node --import tsx --test scripts/paseo-e2ee.test.ts scripts/secure-room.test.ts",
     "test:secure-client": "node --import tsx --test scripts/secure-room-client.test.ts",

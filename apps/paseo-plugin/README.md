@@ -1,76 +1,50 @@
 # Paseo Rooms plugin
 
-A Paseo plugin that adds a **Share session** action to the agent context. It
-mints a public room URL for the focused agent using the local
-[paseo-rooms](../paseo-rooms) room server.
-
-## What it does
-
-Backend handler (`share.server.ts`, server bundle only):
-
-1. `GET <baseUrl>/healthz` — if the room server is not answering, spawn
-   `npm start` in the paseo-rooms checkout, detached, and poll until healthy.
-2. Read the admin token from `<roomsPath>/data/admin-token`.
-3. `POST <baseUrl>/api/rooms` with `{ agentId, label }` and `Authorization:
-Bearer <admin token>`.
-4. Return `{ url, token, startedServer }`.
-
-Client surface (`main.client.tsx`, client bundle only): an agent panel with a
-button that calls the RPC and renders the resulting URL as selectable text.
-The command center item "Share session" (agent context) opens that panel.
-
-Only the resulting room URL crosses to the client. Paseo's plugin compiler
-splits the entry point by target, so the admin token path, the `Bearer` header
-and `node:child_process` are physically absent from the client bundle (verified
-by compiling with `@getpaseo/server`'s `compilePlugin` and grepping both
-bundles).
-
-## Configuration
-
-`paseo-rooms.config.json`:
-
-| key                          | default                                        | meaning                         |
-| ---------------------------- | ---------------------------------------------- | ------------------------------- |
-| `roomsPath`                  | `/home/thomas/code/paseo-rooms/apps/relay-web` | room-server workspace           |
-| `baseUrl`                    | `http://localhost:3000`                        | room server base URL            |
-| `startCommand` / `startArgs` | `npm` / `["start"]`                            | how to boot the server          |
-| `startTimeoutMs`             | `45000`                                        | how long to wait for `/healthz` |
-
-**Caveat:** a Paseo plugin cannot locate its own directory at runtime. The
-server half is bundled to CommonJS inside a wrapper function (no `__dirname`,
-no `import.meta.url`) and the plugin subprocess is forked with no `cwd` and no
-env var naming the plugin directory. So the config path is resolved from
-absolute candidates, in order:
-
-1. `$PASEO_ROOMS_CONFIG`
-2. `$PASEO_ROOMS_PLUGIN_DIR/paseo-rooms.config.json`, defaulting to the
-   `PLUGIN_DIR` constant at the top of `share.server.ts`
-3. `~/.config/paseo-rooms/plugin.json`
-
-If you clone this elsewhere, set `PASEO_ROOMS_PLUGIN_DIR` for the daemon or
-edit that constant.
+The **Share session** Paseo extension and its laptop-side room runtime are
+distributed together from the repository root. The root `paseo-plugin.json`
+prepares the exact monorepo revision before Paseo validates, compiles, and
+activates the plugin.
 
 ## Install
 
-`paseo plugin` is unreleased — it is not in the published `@getpaseo/cli`
-0.4.0. Run it from a checkout of the Paseo monorepo:
+Install a trusted release branch or tag from Git:
 
 ```sh
-git clone --depth 1 https://github.com/getpaseo/paseo /tmp/paseo
-cd /tmp/paseo && npm install --ignore-scripts && npm run build:server
-node packages/cli/dist/index.js plugin install /home/thomas/code/paseo-rooms/apps/paseo-plugin
-node packages/cli/dist/index.js plugin ls
+paseo plugin add https://gitlab.com/pyratzlabs/software/paseo-rooms.git --ref <release-ref>
+paseo plugin status paseo-rooms
 ```
 
-This requires a daemon that advertises the `pluginManagement` feature in its
-`server_info`. As of desktop app v0.17.1 (server 0.4.0) it advertises **no**
-`plugin*` features at all, and the CLI refuses with
-`Update the host to use plugin management.` Upgrade the daemon to a build with
-plugin support before installing.
+The plugin owns the room server in its daemon-side process. It starts one
+loopback listener on demand, keeps the admin token server-side, and closes the
+listener when Paseo reloads, updates, disables, or shuts down the plugin. No
+checkout path, detached child process, or `roomsPath` configuration is required.
 
-## Develop
+For contributor development from this monorepo:
 
 ```sh
-npm install
-npm run typecheck
+paseo plugin install /path/to/paseo-rooms
 ```
+
+## Runtime settings
+
+`PASEO_ROOMS_PORT` changes the loopback port (default `3000`). `PASEO_HOME`
+chooses the parent data directory; the room runtime stores its local state in
+`$PASEO_HOME/paseo-rooms` (or `~/.paseo/paseo-rooms`).
+
+Before sharing, set `PASEO_ROOMS_RELAY_KEY` in the environment of the Paseo
+daemon. That credential authorizes this laptop to register rooms with a relay;
+it is intentionally never stored in the plugin or Git repository. The default
+public origin is `https://paseo-rooms.pyratzlabs.fr`; use
+`PASEO_ROOMS_PUBLIC_URL` and `PASEO_ROOMS_RELAY_URL` together for a private
+relay. These are runtime credentials/settings, not installation paths.
+
+## Updates and debugging
+
+```sh
+paseo plugin update paseo-rooms
+paseo plugin logs paseo-rooms
+```
+
+Git plugin code and its manifest preparation commands are trusted, unsandboxed
+code on the daemon host. Install only revisions you trust. A plugin update
+restarts the in-memory room runtime, so existing share links are invalidated.

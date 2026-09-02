@@ -73,8 +73,7 @@ plugin-verify:
     - paseo-rooms
   script:
     - npm ci --no-audit --no-fund
-    - npm run test:plugin
-    - npm run typecheck:plugin
+    - npm run verify:plugin-distribution
   rules:
     - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
 

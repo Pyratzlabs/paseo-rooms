@@ -89,13 +89,21 @@ The Paseo plugin that adds a **Share session** action to the agent context
 lives in [`apps/paseo-plugin`](apps/paseo-plugin). It boots the local room
 server if it is not running, then mints a share URL for the focused agent.
 
-Install it from this checkout with your Paseo CLI:
+For development, install the plugin from this checkout root:
 
 ```bash
-paseo plugin install "$PWD/apps/paseo-plugin"
+paseo plugin install "$PWD"
 ```
 
-The checked-in development config starts the sibling `apps/relay-web`
-workspace. For another checkout location, set `PASEO_ROOMS_CONFIG` to a config
-file that supplies its `roomsPath`; see the
-[plugin README](apps/paseo-plugin/README.md).
+For a published release channel, install the same monorepo revision from Git:
+
+```bash
+paseo plugin add https://gitlab.com/pyratzlabs/software/paseo-rooms.git --ref <release-ref>
+paseo plugin status paseo-rooms
+```
+
+Paseo prepares, validates, and compiles that revision before activation. The
+plugin then runs the matching local room runtime in its own process; no checkout
+path or `roomsPath` configuration is required. A tracked release branch can be
+updated with `paseo plugin update paseo-rooms`; pinned tags and commits remain
+reproducible installations.

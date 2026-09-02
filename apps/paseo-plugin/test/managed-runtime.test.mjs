@@ -16,10 +16,15 @@ test("the repository root is an installable Paseo Rooms plugin", () => {
 
   assert.equal(manifest.id, "paseo-rooms");
   assert.deepEqual(manifest.build, [
-    ["npm", "ci", "--ignore-scripts"],
+    ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
     ["npm", "run", "verify:plugin-distribution"],
   ]);
   assert.match(entry, /apps\/paseo-plugin\/index/);
+  assert.equal(
+    fs.existsSync(path.join(pluginRoot, "paseo-plugin.json")),
+    false,
+    "the nested source directory must not become a second, incomplete plugin root",
+  );
 });
 
 test("the plugin owns an in-process local room runtime", () => {
@@ -40,6 +45,9 @@ test("the plugin owns an in-process local room runtime", () => {
   assert.doesNotMatch(server, /PLUGIN_DIR|roomsPath|startCommand|startArgs/);
   assert.match(runtime, /startLocalRoomServer/);
   assert.match(runtime, /127\.0\.0\.1/);
+  assert.match(runtime, /PASEO_ROOMS_PUBLIC_URL/);
+  assert.match(runtime, /PASEO_ROOMS_RELAY_KEY is required/);
   assert.match(runtime, /close\(\)/);
   assert.match(localServer, /export async function startLocalRoomServer/);
+  assert.match(localServer, /PUBLIC_BASE_URL/);
 });
