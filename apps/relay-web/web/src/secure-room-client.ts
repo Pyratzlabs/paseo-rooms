@@ -1,10 +1,10 @@
-import { createClientChannel } from "./paseo-e2ee";
+import { createClientChannel } from "./paseo-e2ee.js";
 import type {
   RoomInfo,
   RoomParticipant,
   TimelineItem,
   StreamEvent,
-} from "./api";
+} from "./api.js";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
