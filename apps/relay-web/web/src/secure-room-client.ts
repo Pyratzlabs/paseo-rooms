@@ -210,7 +210,10 @@ function parseWelcome(payload: unknown): SecureWelcome | null {
   };
 }
 
-function parseEvent(payload: unknown): SecureEvent | null {
+type ParsedSecureEvent = SecureEvent | "unsupported" | null;
+
+/** Parse supported stream events while distinguishing bad data from new kinds. */
+export function parseSecureStreamEvent(payload: unknown): ParsedSecureEvent {
   if (!isRecord(payload) || typeof payload.type !== "string") return null;
   if (payload.type === "presence" && Array.isArray(payload.participants)) {
     const participants = payload.participants.filter(isParticipant);
@@ -229,6 +232,12 @@ function parseEvent(payload: unknown): SecureEvent | null {
         : {}),
     };
   }
+  if (
+    payload.type === "stream" &&
+    isRecord(payload.event) &&
+    typeof payload.event.type === "string"
+  )
+    return "unsupported";
   return null;
 }
 
@@ -339,13 +348,14 @@ export async function connectSecureRoom(
           return;
         }
         if (!sessionId) throw new Error("secure event before welcome");
-        const event = parseEvent(record.payload);
+        const event = parseSecureStreamEvent(record.payload);
         // Paseo can add timeline event kinds independently of this renderer.
         // They are authenticated by the room channel, so an event we do not
         // render must not tear down collaboration (and prevent sending) for
         // every connected guest. Malformed envelopes were already rejected by
         // parseSecureRecord above.
-        if (event) handlers.onEvent(event);
+        if (event === null) throw new Error("invalid secure room event");
+        if (event !== "unsupported") handlers.onEvent(event);
       } catch (error) {
         handlers.onError(
           error instanceof Error ? error : new Error(String(error)),

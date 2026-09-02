@@ -20,6 +20,7 @@
     "test:relay": "node --import tsx --test scripts/relay-protocol.test.ts",
     "test:relay-client": "node --import tsx --test scripts/relay-client.test.ts",
     "test:e2ee": "node --import tsx --test scripts/paseo-e2ee.test.ts scripts/secure-room.test.ts",
+    "test:secure-client": "node --import tsx --test scripts/secure-room-client.test.ts",
     "test:e2ee-browser": "PASEO_E2EE_SMOKE=1 vite build --config web/vite.config.ts && node --test scripts/e2ee-browser-build.test.mjs",
     "test:name": "node --import tsx --test scripts/name.test.ts",
     "test:scroll": "node --import tsx --test scripts/scroll.test.ts",
