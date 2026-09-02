@@ -34,8 +34,13 @@ async function connect(): Promise<PaseoClient> {
     password: PASEO_PASSWORD,
     reconnect: { enabled: true },
   });
-  await c.connect();
-  return c;
+  try {
+    await c.connect();
+    return c;
+  } catch (error) {
+    await closeQuietly(c);
+    throw error;
+  }
 }
 
 function waitForRetry(delay: number): Promise<void> {
