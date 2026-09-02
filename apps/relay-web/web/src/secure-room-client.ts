@@ -60,8 +60,12 @@ export function secureInviteFromLocation(
   const inviteSecret = params.get("i");
   const hostPublicKey = params.get("hp");
   if (!inviteSecret || !hostPublicKey) return null;
-  history.replaceState(null, "", location.pathname + location.search);
   return { routeId: token, inviteSecret, hostPublicKey };
+}
+
+/** Remove invite material only after React has retained the parsed invite. */
+export function hideSecureInviteFromLocation(): void {
+  history.replaceState(null, "", location.pathname + location.search);
 }
 
 function encodeJson(value: unknown): ArrayBuffer {

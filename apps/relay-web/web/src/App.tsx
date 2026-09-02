@@ -27,6 +27,7 @@ import { Participants } from "./components/Participants";
 import { shouldFollowTimeline } from "./scroll";
 import {
   connectSecureRoom,
+  hideSecureInviteFromLocation,
   secureInviteFromLocation,
   type SecureEvent,
 } from "./secure-room-client";
@@ -73,6 +74,10 @@ export default function App() {
   const timeline = useRef<HTMLElement>(null);
   const followTimeline = useRef(true);
   const initiallyScrolled = useRef(false);
+
+  useEffect(() => {
+    if (secureInvite.current) hideSecureInviteFromLocation();
+  }, []);
 
   const scrollToLatest = useCallback((force = false) => {
     if (force) followTimeline.current = true;

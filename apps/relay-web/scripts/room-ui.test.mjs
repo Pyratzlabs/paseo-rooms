@@ -46,6 +46,10 @@ const relay = await readFile(
   new URL("../src/relay/relay.ts", import.meta.url),
   "utf8",
 );
+const secureClient = await readFile(
+  new URL("../web/src/secure-room-client.ts", import.meta.url),
+  "utf8",
+);
 
 test("the public root is a responsive, accessible Paseo Rooms landing page", () => {
   assert.match(
@@ -96,6 +100,15 @@ test("secure rooms submit only through their encrypted session", () => {
   assert.match(app, /await session\.sendMessage\(message\)/);
   assert.match(app, /await session\.answer\(question\.id, actionId\)/);
   assert.match(app, /await session\.answerPrompts\(question\.id, answers\)/);
+});
+
+test("secure invite material is retained through React render before hiding", () => {
+  assert.match(app, /hideSecureInviteFromLocation/);
+  assert.match(secureClient, /export function hideSecureInviteFromLocation/);
+  assert.match(
+    secureClient,
+    /export function secureInviteFromLocation[\s\S]*?return \{ routeId: token, inviteSecret, hostPublicKey \};/,
+  );
 });
 
 test("the React room gates live participation on a name and renders presence", () => {
