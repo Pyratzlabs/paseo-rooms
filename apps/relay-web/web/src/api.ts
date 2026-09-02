@@ -43,6 +43,7 @@ export interface TimelineItem {
 }
 
 export type StreamEvent =
+  | { type: "thread_started" }
   | { type: "timeline"; item: TimelineItem }
   | { type: "turn_started" | "turn_completed" | "turn_canceled" }
   | { type: "turn_failed"; error?: string }
@@ -51,7 +52,8 @@ export type StreamEvent =
       request?: RoomQuestion | null;
       kind?: string;
     }
-  | { type: "permission_resolved"; requestId?: string };
+  | { type: "permission_resolved"; requestId?: string }
+  | { type: "attention_required" };
 
 function roomPath(token: string, suffix = ""): string {
   return `/api/rooms/${encodeURIComponent(token)}${suffix}`;

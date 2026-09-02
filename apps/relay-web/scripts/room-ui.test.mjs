@@ -111,6 +111,12 @@ test("secure invite material is retained through React render before hiding", ()
   );
 });
 
+test("secure rooms tolerate Paseo lifecycle events the renderer does not display", () => {
+  assert.match(secureClient, /value\.type === "thread_started"/);
+  assert.match(secureClient, /value\.type === "attention_required"/);
+  assert.match(secureClient, /if \(event\) handlers\.onEvent\(event\)/);
+});
+
 test("the React room gates live participation on a name and renders presence", () => {
   assert.match(
     app,
