@@ -59,6 +59,7 @@ const ASSET_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -103,6 +104,32 @@ function staticDocument(res: http.ServerResponse, file: string): boolean {
   } catch {
     return false;
   }
+}
+
+function docsDocument(res: http.ServerResponse, pieces: string[]): boolean {
+  if (pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece))) return false;
+  const root = path.join(PUBLIC_DIR, "docs");
+  const target = path.resolve(root, ...pieces);
+  if (target !== root && !target.startsWith(`${root}${path.sep}`)) return false;
+  for (const candidate of [target, path.join(target, "index.html")]) {
+    try {
+      if (fs.statSync(candidate).isDirectory()) continue;
+      const type =
+        ASSET_TYPES[path.extname(candidate).toLowerCase()] ??
+        "application/octet-stream";
+      res.writeHead(200, {
+        "content-type": type,
+        "cache-control": type.startsWith("text/html")
+          ? "no-cache"
+          : "public, max-age=31536000, immutable",
+      });
+      res.end(fs.readFileSync(candidate));
+      return true;
+    } catch {
+      // Try the directory index next.
+    }
+  }
+  return false;
 }
 
 interface PendingRequest {
@@ -365,6 +392,11 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
             parts.slice(1),
             "public, max-age=31536000, immutable",
           ) || plain(res, 404, "not found")
+        );
+      }
+      if (req.method === "GET" && parts[0] === "docs") {
+        return void (
+          docsDocument(res, parts.slice(1)) || plain(res, 404, "not found")
         );
       }
       if (req.method === "GET" && parts[0] === "r" && parts.length === 2) {

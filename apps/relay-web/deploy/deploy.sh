@@ -40,7 +40,8 @@ echo "==> Ensuring remote directory exists: $REMOTE_DIR"
 # shellcheck disable=SC2086
 ssh $SSH_OPTS "$SSH_TARGET" "mkdir -p '$REMOTE_DIR/deploy' '$REMOTE_DIR/src/relay' '$REMOTE_DIR/public'"
 
-echo "==> Building the public room UI"
+echo "==> Building public documentation and the room UI"
+(cd "$REPO_ROOT/../.." && npm run build:docs)
 (cd "$REPO_ROOT" && npm run build:web)
 
 echo "==> Syncing deploy assets, public UI, and relay source to $SSH_TARGET:$REMOTE_DIR"

@@ -1,0 +1,33 @@
+import type { SidebarsConfig } from "@docusaurus/plugin-content-docs";
+
+const sidebars: SidebarsConfig = {
+  docs: [
+    "intro",
+    {
+      type: "category",
+      label: "Tutorials",
+      items: ["tutorials/share-your-first-room"],
+    },
+    {
+      type: "category",
+      label: "How-to guides",
+      items: [
+        "how-to/install-the-plugin",
+        "how-to/manage-share-links",
+        "how-to/run-your-own-relay",
+      ],
+    },
+    {
+      type: "category",
+      label: "Reference",
+      items: ["protocol-v2"],
+    },
+    {
+      type: "category",
+      label: "Explanation",
+      items: ["explanation/architecture", "explanation/security-and-privacy"],
+    },
+  ],
+};
+
+export default sidebars;

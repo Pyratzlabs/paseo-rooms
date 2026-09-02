@@ -9,6 +9,13 @@ const config = await readFile(
 const packageJson = JSON.parse(
   await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
 );
+const relayPackageJson = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+);
+const deployScript = await readFile(
+  new URL("../deploy/deploy.sh", import.meta.url),
+  "utf8",
+);
 
 test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
   const jobs = ["quality", "tests", "plugin-verify", "deploy"];
@@ -55,6 +62,7 @@ test("quality and behavior checks are separate CI jobs", () => {
     "npm run lint",
     "npm run typecheck",
     "npm run typecheck:web",
+    "npm run build:docs",
     "npm run build:web",
   ]) {
     assert.match(
@@ -66,6 +74,11 @@ test("quality and behavior checks are separate CI jobs", () => {
       `quality must run ${command}`,
     );
   }
+  assert.match(
+    config,
+    /^tests:[\s\S]*?^    - npm run build:docs$/m,
+    "tests must build public documentation before exercising relay static serving",
+  );
   assert.match(
     config,
     /^tests:[\s\S]*?^    - npm run build:web$/m,
@@ -97,12 +110,23 @@ test("quality and behavior checks are separate CI jobs", () => {
   }
   assert.equal(
     packageJson.scripts["format:check"],
-    "npm run format:check --workspace @paseo-rooms/relay-web",
+    "npm run format:check --workspace @paseo-rooms/relay-web && npm run format:check --workspace @paseo-rooms/docs",
   );
   assert.equal(
     packageJson.scripts.lint,
-    "npm run lint --workspace @paseo-rooms/relay-web",
+    "npm run lint --workspace @paseo-rooms/relay-web && npm run lint --workspace @paseo-rooms/docs",
   );
+  assert.match(deployScript, /npm run build:docs/);
+  assert.match(deployScript, /npm run build:web/);
+});
+
+test("the local room server builds the documentation site before starting", () => {
+  assert.match(
+    relayPackageJson.scripts.start,
+    /npm --prefix \.\.\/docs run build/,
+    "a fresh local checkout must generate /docs/ before the landing page links to it",
+  );
+  assert.match(relayPackageJson.scripts.start, /npm run build:web/);
 });
 
 test("verification jobs run for merge request pipelines", () => {

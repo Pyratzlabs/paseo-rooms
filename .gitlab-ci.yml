@@ -31,6 +31,7 @@ quality:
     - npm run lint
     - npm run typecheck
     - npm run typecheck:web
+    - npm run build:docs
     - npm run build:web
   artifacts:
     paths:
@@ -46,6 +47,7 @@ tests:
     - paseo-rooms
   script:
     - npm ci --no-audit --no-fund
+    - npm run build:docs
     - npm run build:web
     - npm run test:relay
     - npm run test:relay-client
@@ -125,7 +127,7 @@ deploy:
     - if: $CI_COMMIT_BRANCH == "main" && $DEPLOY_SSH_TARGET && $DEPLOY_SSH_PRIVATE_KEY && $DEPLOY_SSH_KNOWN_HOSTS && $RELAY_KEY
 
 include:
-- local: /.code-voucher/code-voucher-ci.yml
-  inputs:
-    review_stage: test
-    qa_stage: test
+  - local: /.code-voucher/code-voucher-ci.yml
+    inputs:
+      review_stage: test
+      qa_stage: test

@@ -2,4 +2,7 @@ node_modules/
 data/
 *.log
 apps/relay-web/public/assets/
+apps/relay-web/public/docs/
+apps/docs/.docusaurus/
+apps/docs/build/
 apps/relay-web/.e2ee-smoke/
