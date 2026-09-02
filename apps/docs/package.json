@@ -1,0 +1,28 @@
+{
+  "name": "@paseo-rooms/docs",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "docusaurus start",
+    "build": "docusaurus build --out-dir ../relay-web/public/docs",
+    "clear": "docusaurus clear",
+    "format": "prettier --write docusaurus.config.ts sidebars.ts src static ../../docs/intro.md ../../docs/tutorials ../../docs/how-to ../../docs/explanation ../../docs/protocol-v2.md",
+    "format:check": "prettier --check docusaurus.config.ts sidebars.ts src static ../../docs/intro.md ../../docs/tutorials ../../docs/how-to ../../docs/explanation ../../docs/protocol-v2.md",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@docusaurus/core": "^3.10.2",
+    "@docusaurus/preset-classic": "^3.10.2",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "eslint": "^9.39.5",
+    "globals": "^16.5.0",
+    "prettier": "^3.9.6",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.68.0"
+  }
+}

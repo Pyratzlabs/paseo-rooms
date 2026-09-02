@@ -64,11 +64,19 @@ test("the public root is a responsive, accessible Paseo Rooms landing page", () 
   assert.match(landing, /room-plan-approval\.png/);
   assert.match(landing, /room-question\.png/);
   assert.match(landing, /made-tommy-medium\.woff2/);
+  assert.match(landing, /href="\/docs\/"/);
   assert.match(landing, /@media \(max-width:\s*720px\)/);
   assert.match(server, /landingAssetResponse/);
   assert.match(server, /parts\[0\] === "landing"/);
   assert.match(relay, /staticDocument\(res, "index\.html"\)/);
   assert.match(relay, /safeAsset\(\s*res,\s*"landing"/);
+});
+
+test("the public relay owns the built documentation site", () => {
+  assert.match(server, /function docsResponse/);
+  assert.match(server, /parts\[0\] === "docs"/);
+  assert.match(relay, /function docsDocument/);
+  assert.match(relay, /parts\[0\] === "docs"/);
 });
 
 test("the public room is a Vite entry with relay-owned immutable assets", () => {

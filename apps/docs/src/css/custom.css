@@ -1,0 +1,53 @@
+@font-face {
+  font-family: "Pyratz";
+  src: url("../../static/fonts/made-tommy-medium.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+
+:root {
+  --ifm-font-family-base:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --ifm-heading-font-family: Pyratz, ui-sans-serif, system-ui, sans-serif;
+  --ifm-heading-font-weight: 500;
+  --ifm-font-weight-semibold: 600;
+  --ifm-font-weight-bold: 700;
+  --ifm-color-primary: #2b5f92;
+  --ifm-color-primary-dark: #25517c;
+  --ifm-color-primary-darker: #224a72;
+  --ifm-color-primary-darkest: #1d3d5e;
+  --ifm-color-primary-light: #3670a8;
+  --ifm-color-primary-lighter: #4a7fb1;
+  --ifm-color-primary-lightest: #739fca;
+  --ifm-background-color: #f3f6f8;
+  --ifm-font-color-base: #122033;
+  --ifm-navbar-background-color: #fbfcfd;
+  --ifm-footer-background-color: #122033;
+  --ifm-code-font-size: 92%;
+  --ifm-global-radius: 10px;
+}
+
+.navbar {
+  border-bottom: 1px solid #d4dde4;
+  box-shadow: none;
+}
+.navbar__title {
+  letter-spacing: -0.02em;
+  font-weight: 500;
+}
+.hero--primary {
+  --ifm-hero-background-color: #e3edf5;
+  --ifm-hero-text-color: #122033;
+}
+.theme-doc-markdown h1,
+.theme-doc-markdown h2 {
+  letter-spacing: -0.035em;
+}
+.theme-doc-markdown h2 {
+  border-top: 1px solid #d4dde4;
+  padding-top: 1.5rem;
+}
+.theme-doc-markdown code {
+  border: 1px solid #d4dde4;
+}

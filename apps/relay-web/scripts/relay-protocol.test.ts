@@ -355,9 +355,7 @@ test("protocol parser validates registered routes and v2 outer records", () => {
     null,
   );
   assert.equal(
-    parseV2OuterRecord(
-      JSON.stringify({ v: 2, type: "group", data: "YWJjZA" }),
-    ),
+    parseV2OuterRecord(JSON.stringify({ v: 2, type: "group", data: "YWJjZA" })),
     null,
   );
 });
@@ -439,6 +437,14 @@ test("register + full http round-trip", async () => {
   const font = await fetch(`${base}/landing/made-tommy-medium.woff2`);
   assert.equal(font.status, 200);
   assert.equal(font.headers.get("content-type"), "font/woff2");
+
+  const docs = await fetch(`${base}/docs/`);
+  assert.equal(docs.status, 200);
+  assert.match(await docs.text(), /Paseo Rooms/);
+  assert.equal(
+    laptop.received.filter((f) => f.type === "http_request").length,
+    forwardedBeforeStatic,
+  );
 
   laptop.close();
   await waitClose(laptop.ws);

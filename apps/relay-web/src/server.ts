@@ -279,6 +279,38 @@ function publicAssetResponse(pieces: string[]): ApiResponse {
   }
 }
 
+/** Static documentation built by Docusaurus into the public relay bundle. */
+function docsResponse(pieces: string[]): ApiResponse {
+  if (pieces.some((piece) => !/^[A-Za-z0-9._-]+$/.test(piece)))
+    return notFound();
+  const root = path.join(PUBLIC_DIR, "docs");
+  const target = path.resolve(root, ...pieces);
+  if (target !== root && !target.startsWith(`${root}${path.sep}`))
+    return notFound();
+  const candidates = [target, path.join(target, "index.html")];
+  for (const candidate of candidates) {
+    try {
+      if (fs.statSync(candidate).isDirectory()) continue;
+      const type =
+        ASSET_TYPES[path.extname(candidate).toLowerCase()] ??
+        "application/octet-stream";
+      return {
+        status: 200,
+        headers: {
+          "content-type": type,
+          "cache-control": type.startsWith("text/html")
+            ? "no-cache"
+            : "public, max-age=31536000, immutable",
+        },
+        body: fs.readFileSync(candidate),
+      };
+    } catch {
+      // Try the directory index next.
+    }
+  }
+  return notFound();
+}
+
 function roomPageResponse(token: string): ApiResponse {
   if (!getRoom(token)) return notFound();
   try {
@@ -296,6 +328,7 @@ const ASSET_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".mjs": "text/javascript; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -338,6 +371,9 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
     }
     if (req.method === "GET" && parts[0] === "assets" && parts.length >= 2) {
       return publicAssetResponse(parts.slice(1));
+    }
+    if (req.method === "GET" && parts[0] === "docs") {
+      return docsResponse(parts.slice(1));
     }
     if (req.method === "GET" && url.pathname === "/") {
       return fileResponse("index.html", "text/html; charset=utf-8");

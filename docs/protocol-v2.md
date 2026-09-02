@@ -1,3 +1,7 @@
+---
+sidebar_position: 1
+---
+
 # Paseo Rooms protocol v2 — pairwise encrypted shared rooms
 
 **Status:** proposed, version `2`
