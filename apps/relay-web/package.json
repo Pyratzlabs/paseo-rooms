@@ -5,7 +5,7 @@
   "description": "Paseo Rooms local room server, public relay, and shared web UI",
   "type": "module",
   "scripts": {
-    "start": "npm run build:web && tsx src/server.ts",
+    "start": "npm --prefix ../docs run build && npm run build:web && tsx src/server.ts",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
     "format": "prettier --write eslint.config.js package.json scripts/ci-config.test.mjs web",
