@@ -19,7 +19,9 @@ test("the repository root is an installable Paseo Rooms plugin", () => {
     ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
     ["npm", "run", "verify:plugin-distribution"],
   ]);
-  assert.match(entry, /apps\/paseo-plugin\/index/);
+  assert.match(entry, /export default function paseoRooms/);
+  assert.match(entry, /apps\/paseo-plugin\/main\.client/);
+  assert.match(entry, /apps\/paseo-plugin\/share\.server/);
   assert.equal(
     fs.existsSync(path.join(pluginRoot, "paseo-plugin.json")),
     false,
