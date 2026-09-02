@@ -325,6 +325,56 @@ test("secure room admits a valid invite and applies encrypted room actions", asy
   }
 });
 
+test("secure room bounds an oversized welcome history without dropping the client", async () => {
+  const room = createRoom("agent", "Long history room");
+  const [serverSocket, browserSocket] = socketPair();
+  const received = receivedRecords();
+  const fake = fakeDependencies();
+  const originalHistory = Array.from({ length: 8 }, (_, index) => ({
+    item: { type: "message", text: `${index}:${"x".repeat(16_000)}` },
+    timestamp: "2026-08-31T00:00:00.000Z",
+  }));
+  fake.deps.fetchFullHistory = async () => originalHistory;
+
+  try {
+    const opened = openSecureRoomSocket(
+      `/v2/rooms/${room.token}/ws`,
+      serverSocket,
+      () => true,
+      async () => true,
+      fake.deps,
+    );
+    const channel = await createClientChannel(
+      browserTransport(browserSocket),
+      room.hostPublicKey,
+      { onmessage: received.onmessage, onerror() {} },
+    );
+    assert.equal(await opened, true);
+    await channel.send(
+      encoder.encode(
+        JSON.stringify({
+          v: 2,
+          kind: "join",
+          joinAttemptId: "long-history-attempt",
+          inviteSecret: room.inviteSecret,
+          displayName: "Alice",
+        }),
+      ).buffer,
+    );
+
+    const welcome = await received.next();
+    assert.equal(welcome.kind, "welcome");
+    assert.equal(welcome.payload.historyTruncated, true);
+    const history = welcome.payload.history as Array<unknown>;
+    assert.ok(history.length > 0);
+    assert.ok(history.length < originalHistory.length);
+    assert.equal(serverSocket.closed, false);
+  } finally {
+    closeSecureRoom(room.token);
+    deleteRoom(room.token);
+  }
+});
+
 test("secure room rejects an encrypted join with the wrong invite", async () => {
   const room = createRoom("agent", "Test room");
   const [serverSocket, browserSocket] = socketPair();
