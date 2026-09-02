@@ -39,6 +39,7 @@ import {
 } from "./paseo.js";
 import { publicStreamEvent } from "./public-events.js";
 import type { RoomQuestionResponse } from "./questions.js";
+import { MAX_V2_RECORD_BYTES } from "./relay/protocol.js";
 import {
   parsePresenceHello,
   RoomPresence,
@@ -535,6 +536,11 @@ const server = http.createServer(async (req, res) => {
 
 // WS /api/rooms/<token>/ws — live timeline fan-out
 const wss = new WebSocketServer({ noServer: true });
+const v2Wss = new WebSocketServer({
+  noServer: true,
+  maxPayload: MAX_V2_RECORD_BYTES,
+  perMessageDeflate: false,
+});
 server.on("upgrade", (req, socket, head) => {
   const origin = req.headers.origin;
   if (origin) {
@@ -557,7 +563,7 @@ server.on("upgrade", (req, socket, head) => {
   }
   const url = new URL(req.url ?? "/", BASE_URL);
   if (url.pathname.startsWith("/v2/rooms/")) {
-    wss.handleUpgrade(req, socket, head, (ws) => {
+    v2Wss.handleUpgrade(req, socket, head, (ws) => {
       openAnyRoomSocket(req.url ?? url.pathname, wrapWebSocket(ws)).then(
         (accepted) => {
           if (!accepted) ws.close(1008, "room unavailable");
