@@ -28,6 +28,8 @@ import type { RoomQuestionResponse } from "./questions.js";
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 const MAX_APP_RECORD_BYTES = 64 * 1024;
+const MAX_PENDING_APP_RECORDS = 4;
+const MAX_PENDING_APP_BYTES = MAX_APP_RECORD_BYTES * 2;
 const MAX_REPLAY_IDS = 512;
 const MAX_PENDING_HANDSHAKES_PER_ROOM = 8;
 const HANDSHAKE_TIMEOUT_MS = 10_000;
@@ -108,6 +110,12 @@ function decodeJson(data: string | ArrayBuffer): unknown {
   if (Buffer.byteLength(raw, "utf8") > MAX_APP_RECORD_BYTES)
     throw new Error("app record too large");
   return JSON.parse(raw);
+}
+
+function recordByteLength(data: string | ArrayBuffer): number {
+  return typeof data === "string"
+    ? Buffer.byteLength(data, "utf8")
+    : data.byteLength;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -392,8 +400,35 @@ export async function openSecureRoomSocket(
   const live = getLiveSecureRoom(room);
   const transport = secureTransport(socket);
   let client: SecureClient | null = null;
+  let admissionStarted = false;
   const pending: Array<string | ArrayBuffer> = [];
+  let pendingBytes = 0;
+  const removeClient = () => {
+    const leaving = client;
+    if (!leaving || !live.clients.delete(leaving)) return;
+    if (live.presence.leave(leaving)) {
+      broadcastSecure(live, "presence", {
+        type: "presence",
+        participants: live.presence.list(),
+      });
+    }
+    if (live.clients.size === 0) {
+      live.unsubscribe?.();
+      live.unsubscribe = null;
+      liveSecureRooms.delete(room.token);
+    }
+  };
   let onPlaintext = (data: string | ArrayBuffer): void => {
+    const bytes = recordByteLength(data);
+    if (
+      pending.length >= MAX_PENDING_APP_RECORDS ||
+      bytes > MAX_APP_RECORD_BYTES ||
+      pendingBytes + bytes > MAX_PENDING_APP_BYTES
+    ) {
+      socket.close(1009, "too many pre-admission records");
+      return;
+    }
+    pendingBytes += bytes;
     pending.push(data);
   };
 
@@ -411,6 +446,7 @@ export async function openSecureRoomSocket(
   });
   socket.onClose(() => transport.onclose?.(1000, "closed"));
   socket.onClose(releasePending);
+  socket.onClose(removeClient);
 
   let channel: EncryptedChannel;
   try {
@@ -419,7 +455,7 @@ export async function openSecureRoomSocket(
         onPlaintext(data);
       },
       onclose() {
-        client?.close();
+        removeClient();
       },
       onerror() {
         client?.close();
@@ -475,21 +511,6 @@ export async function openSecureRoomSocket(
       );
     }
 
-    socket.onClose(() => {
-      if (!client) return;
-      live.clients.delete(client);
-      if (live.presence.leave(client)) {
-        broadcastSecure(live, "presence", {
-          type: "presence",
-          participants: live.presence.list(),
-        });
-      }
-      if (live.clients.size === 0) {
-        live.unsubscribe?.();
-        liveSecureRooms.delete(room.token);
-      }
-    });
-
     await sendSecure(live, client, "welcome", {
       memberId: client.memberId,
       resumeSecret: null,
@@ -519,6 +540,11 @@ export async function openSecureRoomSocket(
   };
 
   onPlaintext = (data) => {
+    if (admissionStarted) {
+      socket.close(1008, "duplicate join");
+      return;
+    }
+    admissionStarted = true;
     void admit(data).catch(() => channel.close(1011, "join failed"));
   };
   for (const data of pending.splice(0)) onPlaintext(data);
