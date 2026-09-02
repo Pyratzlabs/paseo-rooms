@@ -25,6 +25,10 @@ test("secure stream parser distinguishes supported, unsupported, and malformed e
     null,
   );
   assert.equal(
+    parseSecureStreamEvent({ type: "stream", event: { type: "timeline" } }),
+    null,
+  );
+  assert.equal(
     parseSecureStreamEvent({ type: "presence", participants: "not-an-array" }),
     null,
   );

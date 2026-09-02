@@ -191,6 +191,20 @@ function isStreamEvent(value: unknown): value is StreamEvent {
   );
 }
 
+function isKnownStreamEventType(type: string): boolean {
+  return [
+    "timeline",
+    "thread_started",
+    "turn_started",
+    "turn_completed",
+    "turn_canceled",
+    "turn_failed",
+    "permission_requested",
+    "permission_resolved",
+    "attention_required",
+  ].includes(type);
+}
+
 function parseWelcome(payload: unknown): SecureWelcome | null {
   if (!isRecord(payload) || !isRoomInfo(payload.room)) return null;
   const history = Array.isArray(payload.history)
@@ -232,12 +246,10 @@ export function parseSecureStreamEvent(payload: unknown): ParsedSecureEvent {
         : {}),
     };
   }
-  if (
-    payload.type === "stream" &&
-    isRecord(payload.event) &&
-    typeof payload.event.type === "string"
-  )
-    return "unsupported";
+  if (payload.type === "stream" && isRecord(payload.event)) {
+    if (typeof payload.event.type !== "string") return null;
+    return isKnownStreamEventType(payload.event.type) ? null : "unsupported";
+  }
   return null;
 }
 
