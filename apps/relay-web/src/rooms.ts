@@ -84,6 +84,23 @@ export function createRoom(agentId: string, label: string): SecureRoom {
   return room;
 }
 
+/**
+ * Compatibility-only v1 room creation for the legacy real-daemon E2E
+ * harness. Product callers use createRoom(), which always creates v2 rooms.
+ */
+export function createLegacyRoom(agentId: string, label: string): Room {
+  const room: Room = {
+    token: crypto.randomBytes(32).toString("base64url"),
+    agentId,
+    label,
+    createdAt: new Date().toISOString(),
+    protocol: 1,
+  };
+  rooms.set(room.token, room);
+  persist();
+  return room;
+}
+
 export function getRoom(token: string): AnyRoom | undefined {
   return secureRooms.get(token) ?? rooms.get(token);
 }

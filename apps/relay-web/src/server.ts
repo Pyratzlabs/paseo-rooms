@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   createRoom,
+  createLegacyRoom,
   deleteRoom,
   getAdminToken,
   getRoom,
@@ -366,13 +367,19 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       if (!agentId) return json(400, { error: "agentId required" });
       const info = await agentInfo(agentId);
       if (!info) return json(404, { error: "no such agent" });
-      const room = createRoom(
-        agentId,
+      const label =
         typeof body.label === "string"
           ? body.label
-          : (info.title ?? "Shared session"),
-      );
-      relayClient?.registerRoutes([{ token: room.token, protocol: 2 }]);
+          : (info.title ?? "Shared session");
+      const room =
+        body.protocol === 1
+          ? createLegacyRoom(agentId, label)
+          : createRoom(agentId, label);
+      if (isSecureRoom(room)) {
+        relayClient?.registerRoutes([{ token: room.token, protocol: 2 }]);
+      } else {
+        relayClient?.register([room.token]);
+      }
       return json(201, {
         token: room.token,
         url: publicRoomUrl(room, BASE_URL),

@@ -41,9 +41,15 @@ interface Browser {
   closed: boolean;
 }
 
-function openBrowser(name: string, base: string, token: string): Promise<Browser> {
+function openBrowser(
+  name: string,
+  base: string,
+  token: string,
+): Promise<Browser> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${base.replace("http", "ws")}/api/rooms/${token}/ws`);
+    const ws = new WebSocket(
+      `${base.replace("http", "ws")}/api/rooms/${token}/ws`,
+    );
     const browser: Browser = { name, ws, events: [], closed: false };
     ws.on("message", (data) => {
       const frame = JSON.parse(String(data));
@@ -57,7 +63,11 @@ function openBrowser(name: string, base: string, token: string): Promise<Browser
   });
 }
 
-async function waitFor(pred: () => boolean | Promise<boolean>, ms: number, label: string): Promise<boolean> {
+async function waitFor(
+  pred: () => boolean | Promise<boolean>,
+  ms: number,
+  label: string,
+): Promise<boolean> {
   const deadline = Date.now() + ms;
   for (;;) {
     if (await pred()) return true;
@@ -70,12 +80,19 @@ async function waitFor(pred: () => boolean | Promise<boolean>, ms: number, label
 
 function sawUserMessage(b: Browser, text: string): boolean {
   return b.events.some(
-    (f) => f.event.type === "timeline" && f.event.item.type === "user_message" && f.event.item.text.includes(text),
+    (f) =>
+      f.event.type === "timeline" &&
+      f.event.item.type === "user_message" &&
+      f.event.item.text.includes(text),
   );
 }
 function sawAssistantText(b: Browser, text: string): boolean {
   return b.events
-    .filter((f) => f.event.type === "timeline" && f.event.item.type === "assistant_message")
+    .filter(
+      (f) =>
+        f.event.type === "timeline" &&
+        f.event.item.type === "assistant_message",
+    )
     .map((f) => f.event.item.text)
     .join("")
     .includes(text);
@@ -95,7 +112,9 @@ async function main(): Promise<void> {
   console.log(`relay listening on :${relayPort}`);
 
   // -- 2. room server, in dial-out mode, on its own data dir ------------------
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "paseo-rooms-relay-e2e-"));
+  const dataDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "paseo-rooms-relay-e2e-"),
+  );
   process.env.DATA_DIR = dataDir;
   process.env.PORT = String(LOCAL_PORT);
   process.env.BASE_URL = LOCAL_BASE;
@@ -109,7 +128,9 @@ async function main(): Promise<void> {
   const healthy = await waitFor(
     async () => {
       try {
-        const h = (await (await fetch(`${LOCAL_BASE}/healthz`)).json()) as { daemonConnected: boolean };
+        const h = (await (await fetch(`${LOCAL_BASE}/healthz`)).json()) as {
+          daemonConnected: boolean;
+        };
         return h.daemonConnected === true;
       } catch {
         return false;
@@ -122,7 +143,9 @@ async function main(): Promise<void> {
 
   // -- 3. throwaway agent -----------------------------------------------------
   const client = await getClient();
-  const cwd = process.env.E2E_CWD ?? fs.mkdtempSync(path.join(os.tmpdir(), "paseo-rooms-relay-cwd-"));
+  const cwd =
+    process.env.E2E_CWD ??
+    fs.mkdtempSync(path.join(os.tmpdir(), "paseo-rooms-relay-cwd-"));
   const { models } = await client.providers.listModels(PROVIDER as never);
   const model =
     models!.find((m: { id: string }) => m.id.includes("haiku")) ??
@@ -138,28 +161,43 @@ async function main(): Promise<void> {
       "includes the token RELAY-MARKER-1, and from now on always greet each sender by name.",
   } as never);
   const first = await agent.waitForFinish(180_000);
-  check("throwaway agent produced initial history", (first.lastMessage ?? "").includes("RELAY-MARKER-1"));
+  check(
+    "throwaway agent produced initial history",
+    (first.lastMessage ?? "").includes("RELAY-MARKER-1"),
+  );
 
   // -- 4. room creation stays local (admin never crosses the relay) -----------
-  const adminToken = fs.readFileSync(path.join(dataDir, "admin-token"), "utf8").trim();
+  const adminToken = fs
+    .readFileSync(path.join(dataDir, "admin-token"), "utf8")
+    .trim();
   const createRes = await fetch(`${LOCAL_BASE}/api/rooms`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${adminToken}` },
-    body: JSON.stringify({ agentId: agent.id }),
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${adminToken}`,
+    },
+    body: JSON.stringify({ agentId: agent.id, protocol: 1 }),
   });
   check("room created via the LOCAL admin API", createRes.status === 201);
   const { token } = (await createRes.json()) as { token: string };
 
   const relayAdmin = await fetch(`${RELAY_BASE}/api/rooms`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${adminToken}` },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${adminToken}`,
+    },
     body: JSON.stringify({ agentId: agent.id }),
   });
-  check("POST /api/rooms is NOT routable through the relay (404)", relayAdmin.status === 404);
+  check(
+    "POST /api/rooms is NOT routable through the relay (404)",
+    relayAdmin.status === 404,
+  );
 
   // -- 5. collaborator traffic, entirely through the relay --------------------
   const routed = await waitFor(
-    async () => (await fetch(`${RELAY_BASE}/api/rooms/${token}`)).status === 200,
+    async () =>
+      (await fetch(`${RELAY_BASE}/api/rooms/${token}`)).status === 200,
     10_000,
     "token registered with the relay",
   );
@@ -177,52 +215,103 @@ async function main(): Promise<void> {
       assetRes?.status === 200,
   );
 
-  const infoBody = await (await fetch(`${RELAY_BASE}/api/rooms/${token}`)).text();
-  check("relay-served room info never exposes the agent id", !infoBody.includes(agent.id));
+  const infoBody = await (
+    await fetch(`${RELAY_BASE}/api/rooms/${token}`)
+  ).text();
+  check(
+    "relay-served room info never exposes the agent id",
+    !infoBody.includes(agent.id),
+  );
 
   const histRes = await fetch(`${RELAY_BASE}/api/rooms/${token}/history`);
   const hist = (await histRes.json()) as { entries: Array<{ item: any }> };
   check(
     "history on join is served through the relay",
     histRes.status === 200 &&
-      hist.entries.some((e) => e.item.type === "assistant_message" && e.item.text.includes("RELAY-MARKER-1")),
+      hist.entries.some(
+        (e) =>
+          e.item.type === "assistant_message" &&
+          e.item.text.includes("RELAY-MARKER-1"),
+      ),
   );
 
   const a = await openBrowser("A", RELAY_BASE, token);
   const b = await openBrowser("B", RELAY_BASE, token);
-  console.log("\ntwo browsers connected THROUGH THE RELAY; Alice (A) sends a message…");
+  console.log(
+    "\ntwo browsers connected THROUGH THE RELAY; Alice (A) sends a message…",
+  );
 
   const sendA = await fetch(`${RELAY_BASE}/api/rooms/${token}/messages`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message: "Hello! Please greet me by my name.", name: "Alice" }),
+    body: JSON.stringify({
+      message: "Hello! Please greet me by my name.",
+      name: "Alice",
+    }),
   });
   check("Alice's send accepted through the relay", sendA.status === 202);
 
-  await waitFor(() => sawUserMessage(a, "[Alice]") && sawUserMessage(b, "[Alice]"), 20_000, "Alice's message on both relay sockets");
-  check("browser A sees Alice's message over the relay", sawUserMessage(a, "[Alice]"));
-  check("browser B sees Alice's message over the relay", sawUserMessage(b, "[Alice]"));
+  await waitFor(
+    () => sawUserMessage(a, "[Alice]") && sawUserMessage(b, "[Alice]"),
+    20_000,
+    "Alice's message on both relay sockets",
+  );
+  check(
+    "browser A sees Alice's message over the relay",
+    sawUserMessage(a, "[Alice]"),
+  );
+  check(
+    "browser B sees Alice's message over the relay",
+    sawUserMessage(b, "[Alice]"),
+  );
 
-  await waitFor(() => sawAssistantText(a, "Alice") && sawAssistantText(b, "Alice"), 120_000, "agent reply to Alice");
-  check("agent reply streams over the relay to browser A", sawAssistantText(a, "Alice"));
-  check("agent reply streams over the relay to browser B", sawAssistantText(b, "Alice"));
+  await waitFor(
+    () => sawAssistantText(a, "Alice") && sawAssistantText(b, "Alice"),
+    120_000,
+    "agent reply to Alice",
+  );
+  check(
+    "agent reply streams over the relay to browser A",
+    sawAssistantText(a, "Alice"),
+  );
+  check(
+    "agent reply streams over the relay to browser B",
+    sawAssistantText(b, "Alice"),
+  );
 
   console.log("\nBob (B) sends a message…");
   const sendB = await fetch(`${RELAY_BASE}/api/rooms/${token}/messages`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message: "Hi, I just joined — please greet me by my name too.", name: "Bob" }),
+    body: JSON.stringify({
+      message: "Hi, I just joined — please greet me by my name too.",
+      name: "Bob",
+    }),
   });
   check("Bob's send accepted through the relay", sendB.status === 202);
-  await waitFor(() => sawAssistantText(a, "Bob") && sawAssistantText(b, "Bob"), 120_000, "agent reply to Bob");
-  check("browser A sees Bob's message over the relay", sawUserMessage(a, "[Bob]"));
-  check("agent reply to Bob reaches both relay browsers", sawAssistantText(a, "Bob") && sawAssistantText(b, "Bob"));
+  await waitFor(
+    () => sawAssistantText(a, "Bob") && sawAssistantText(b, "Bob"),
+    120_000,
+    "agent reply to Bob",
+  );
+  check(
+    "browser A sees Bob's message over the relay",
+    sawUserMessage(a, "[Bob]"),
+  );
+  check(
+    "agent reply to Bob reaches both relay browsers",
+    sawAssistantText(a, "Bob") && sawAssistantText(b, "Bob"),
+  );
 
   // -- 6. bad tokens at the relay --------------------------------------------
-  const bad = await fetch(`${RELAY_BASE}/api/rooms/definitely-not-a-token/history`);
+  const bad = await fetch(
+    `${RELAY_BASE}/api/rooms/definitely-not-a-token/history`,
+  );
   check("unknown token 404s at the relay", bad.status === 404);
   const badWs = await new Promise<boolean>((resolve) => {
-    const ws = new WebSocket(`${RELAY_BASE.replace("http", "ws")}/api/rooms/nope/ws`);
+    const ws = new WebSocket(
+      `${RELAY_BASE.replace("http", "ws")}/api/rooms/nope/ws`,
+    );
     ws.on("open", () => resolve(false));
     ws.on("error", () => resolve(true));
   });
@@ -232,12 +321,18 @@ async function main(): Promise<void> {
   console.log(`\nidling ~${PING_INTERVAL_MS * 8}ms across heartbeats…`);
   await new Promise((r) => setTimeout(r, PING_INTERVAL_MS * 8));
   const afterPings = await fetch(`${RELAY_BASE}/api/rooms/${token}`);
-  check("host connection survives several ping/pong intervals", afterPings.status === 200 && !a.closed && !b.closed);
+  check(
+    "host connection survives several ping/pong intervals",
+    afterPings.status === 200 && !a.closed && !b.closed,
+  );
 
   // -- 8. relay restart: the laptop must dial back in and re-register ---------
   console.log("\nkilling the relay and starting a fresh one on the same port…");
   await relay.close();
-  check("browsers are disconnected when the relay dies", await waitFor(() => a.closed && b.closed, 5_000, "browser sockets closed"));
+  check(
+    "browsers are disconnected when the relay dies",
+    await waitFor(() => a.closed && b.closed, 5_000, "browser sockets closed"),
+  );
 
   relay = await createRelay({
     port: relayPort,
@@ -257,17 +352,30 @@ async function main(): Promise<void> {
     20_000,
     "room server reconnects and re-registers",
   );
-  check("room server reconnects to the new relay and re-registers its tokens", recovered);
+  check(
+    "room server reconnects to the new relay and re-registers its tokens",
+    recovered,
+  );
 
   const c = await openBrowser("C", RELAY_BASE, token);
   const sendC = await fetch(`${RELAY_BASE}/api/rooms/${token}/messages`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message: "Hello again after the reconnect — greet me by name please.", name: "Carol" }),
+    body: JSON.stringify({
+      message: "Hello again after the reconnect — greet me by name please.",
+      name: "Carol",
+    }),
   });
   check("send accepted after the relay restart", sendC.status === 202);
-  await waitFor(() => sawUserMessage(c, "[Carol]"), 20_000, "Carol's message on the recovered socket");
-  check("live streaming works again after the relay restart", sawUserMessage(c, "[Carol]"));
+  await waitFor(
+    () => sawUserMessage(c, "[Carol]"),
+    20_000,
+    "Carol's message on the recovered socket",
+  );
+  check(
+    "live streaming works again after the relay restart",
+    sawUserMessage(c, "[Carol]"),
+  );
 
   // -- 9. revocation unregisters at the relay ---------------------------------
   const revoked = new Promise<boolean>((resolve) => {
@@ -281,7 +389,10 @@ async function main(): Promise<void> {
   check("revoke via the local admin API succeeds", revokeRes.status === 200);
   check("revoked room's relay socket is closed", await revoked);
   const afterRevoke = await fetch(`${RELAY_BASE}/api/rooms/${token}/history`);
-  check("revoked room is no longer routable at the relay (404)", afterRevoke.status === 404);
+  check(
+    "revoked room is no longer routable at the relay (404)",
+    afterRevoke.status === 404,
+  );
 
   // -- cleanup ----------------------------------------------------------------
   await agent.archive();
@@ -289,13 +400,16 @@ async function main(): Promise<void> {
   // pile up junk entries in the user's Paseo sidebar.
   const workspaces = await client.workspaces.list({});
   for (const w of workspaces.entries) {
-    if (w.projectRootPath === cwd) await client.workspaces.archive(w.id).catch(() => {});
+    if (w.projectRootPath === cwd)
+      await client.workspaces.archive(w.id).catch(() => {});
   }
   console.log("\nthrowaway agent + workspace archived.");
   await client.close();
   await relay.close();
   fs.rmSync(dataDir, { recursive: true, force: true });
-  console.log(`\n${process.exitCode ? "FAILED" : "PASSED"} (${passed} checks ok)`);
+  console.log(
+    `\n${process.exitCode ? "FAILED" : "PASSED"} (${passed} checks ok)`,
+  );
   process.exit(process.exitCode ?? 0);
 }
 

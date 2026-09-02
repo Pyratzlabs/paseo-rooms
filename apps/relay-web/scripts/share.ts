@@ -29,7 +29,13 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const { rooms } = (await res.json()) as {
-      rooms: Array<{ token: string; agentId: string; label: string; createdAt: string }>;
+      rooms: Array<{
+        token: string;
+        agentId: string;
+        label: string;
+        createdAt: string;
+        url: string;
+      }>;
     };
     if (rooms.length === 0) {
       console.log("no active rooms");
@@ -37,8 +43,10 @@ async function main(): Promise<void> {
     }
     console.log("Active rooms:\n");
     for (const room of rooms) {
-      console.log(`  ${room.token}  ${room.label}  (created ${room.createdAt})`);
-      console.log(`    ${BASE_URL}/r/${room.token}`);
+      console.log(
+        `  ${room.token}  ${room.label}  (created ${room.createdAt})`,
+      );
+      console.log(`    ${room.url}`);
     }
     return;
   }
@@ -82,7 +90,11 @@ async function main(): Promise<void> {
   const page = await client.agents.list({ page: { limit: 200 } });
   const matches = page.entries.filter(({ agent }) => agent.id.startsWith(arg));
   if (matches.length !== 1) {
-    console.error(matches.length === 0 ? `no agent matches "${arg}"` : `"${arg}" is ambiguous (${matches.length} matches)`);
+    console.error(
+      matches.length === 0
+        ? `no agent matches "${arg}"`
+        : `"${arg}" is ambiguous (${matches.length} matches)`,
+    );
     await client.close();
     process.exit(1);
   }
@@ -91,7 +103,10 @@ async function main(): Promise<void> {
   const adminToken = readAdminToken();
   const res = await fetch(`${BASE_URL}/api/rooms`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${adminToken}` },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${adminToken}`,
+    },
     body: JSON.stringify({ agentId: agent.id }),
   });
   if (!res.ok) {
@@ -102,7 +117,9 @@ async function main(): Promise<void> {
   const { url } = (await res.json()) as { url: string };
   console.log(`Sharing agent: ${(agent.title ?? agent.id).slice(0, 70)}`);
   console.log(`\n  ${url}\n`);
-  console.log("Send this link to your collaborator. Anyone with the link can chat with this agent.");
+  console.log(
+    "Send this link to your collaborator. Anyone with the link can chat with this agent.",
+  );
   await client.close();
 }
 
