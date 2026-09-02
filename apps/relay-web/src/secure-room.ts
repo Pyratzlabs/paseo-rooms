@@ -293,17 +293,68 @@ async function sendSecure(
   kind: string,
   payload: unknown,
 ): Promise<void> {
+  const record = {
+    v: 2,
+    sessionId: live.sessionId,
+    seq: client.hostSeq + 1,
+    id: randomId(),
+    kind,
+    payload,
+  };
+  const encoded = encodeJson(record);
+  if (encoded.byteLength > MAX_APP_RECORD_BYTES)
+    throw new Error("secure room record exceeds the protocol limit");
   client.hostSeq += 1;
-  await client.channel.send(
-    encodeJson({
-      v: 2,
-      sessionId: live.sessionId,
-      seq: client.hostSeq,
-      id: randomId(),
-      kind,
-      payload,
-    }),
-  );
+  await client.channel.send(encoded);
+}
+
+/**
+ * The first encrypted record contains the room snapshot. A long-lived Paseo
+ * timeline can exceed the v2 record limit, which used to make the *relay
+ * control* WebSocket exceed its limit and drop every guest as the snapshot was
+ * forwarded. Preserve the newest history that fits one authenticated v2
+ * record; subsequent live events remain unaffected.
+ */
+function boundedWelcomePayload(
+  live: SecureLiveRoom,
+  client: SecureClient,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
+  const history = Array.isArray(payload.history) ? payload.history : [];
+  const fits = (start: number): boolean => {
+    const candidate = {
+      ...payload,
+      history: history.slice(start),
+      ...(start > 0 ? { historyTruncated: true } : {}),
+    };
+    return (
+      encodeJson({
+        v: 2,
+        sessionId: live.sessionId,
+        seq: client.hostSeq + 1,
+        // A real record id has this fixed base64url length; use the same
+        // shape while sizing so the test is conservative and deterministic.
+        id: "x".repeat(22),
+        kind: "welcome",
+        payload: candidate,
+      }).byteLength <= MAX_APP_RECORD_BYTES
+    );
+  };
+
+  if (fits(0)) return payload;
+
+  let low = 0;
+  let high = history.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (fits(middle)) high = middle;
+    else low = middle + 1;
+  }
+  return {
+    ...payload,
+    history: history.slice(low),
+    historyTruncated: true,
+  };
 }
 
 function broadcastSecure(
@@ -509,12 +560,13 @@ export async function openSecureRoomSocket(
       );
     }
 
-    await sendSecure(live, client, "welcome", {
+    const welcomePayload = boundedWelcomePayload(live, client, {
       memberId: client.memberId,
       resumeSecret: null,
       nextClientSeq: 1,
       ...(await roomSnapshot(room, live.presence.list(), deps)),
     });
+    await sendSecure(live, client, "welcome", welcomePayload);
     broadcastSecure(live, "presence", {
       type: "presence",
       participants: live.presence.list(),

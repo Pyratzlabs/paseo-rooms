@@ -349,9 +349,18 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
       backoff = Math.min(backoff * 2, maxBackoff);
     };
 
-    socket.on("close", reconnect);
-    socket.on("error", () => {
-      // 'close' always follows; swallow so an unreachable relay is not fatal.
+    socket.on("close", (code, reason) => {
+      const detail = reason.toString("utf8");
+      log(
+        `[relay-client] control socket closed (code ${code}${detail ? `, ${detail}` : ""})`,
+      );
+      reconnect();
+    });
+    socket.on("error", (error) => {
+      // 'close' always follows; keep the reconnect path single, but retain the
+      // cause: without it, an upstream or TLS failure is indistinguishable
+      // from an intentional relay restart.
+      log(`[relay-client] control socket error: ${error.message}`);
     });
   }
 
