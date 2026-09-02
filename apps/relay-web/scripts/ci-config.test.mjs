@@ -9,6 +9,9 @@ const config = await readFile(
 const packageJson = JSON.parse(
   await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
 );
+const relayPackageJson = JSON.parse(
+  await readFile(new URL("../package.json", import.meta.url), "utf8"),
+);
 const deployScript = await readFile(
   new URL("../deploy/deploy.sh", import.meta.url),
   "utf8",
@@ -115,6 +118,15 @@ test("quality and behavior checks are separate CI jobs", () => {
   );
   assert.match(deployScript, /npm run build:docs/);
   assert.match(deployScript, /npm run build:web/);
+});
+
+test("the local room server builds the documentation site before starting", () => {
+  assert.match(
+    relayPackageJson.scripts.start,
+    /npm --prefix \.\.\/docs run build/,
+    "a fresh local checkout must generate /docs/ before the landing page links to it",
+  );
+  assert.match(relayPackageJson.scripts.start, /npm run build:web/);
 });
 
 test("verification jobs run for merge request pipelines", () => {
