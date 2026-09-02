@@ -1,7 +1,0 @@
-{
-  "roomsPath": "/home/thomas/code/paseo-rooms/apps/relay-web",
-  "baseUrl": "http://localhost:3000",
-  "startCommand": "npm",
-  "startArgs": ["start"],
-  "startTimeoutMs": 45000
-}

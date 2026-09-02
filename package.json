@@ -11,6 +11,7 @@
     "start": "npm run start --workspace @paseo-rooms/relay-web",
     "build:web": "npm run build:web --workspace @paseo-rooms/relay-web",
     "build:docs": "npm run build --workspace @paseo-rooms/docs",
+    "verify:plugin-distribution": "npm run test:plugin && npm run typecheck:plugin && npm run typecheck --workspace @paseo-rooms/relay-web && npm run test:local-server --workspace @paseo-rooms/relay-web",
     "dev:web": "npm run dev:web --workspace @paseo-rooms/relay-web",
     "share": "npm run share --workspace @paseo-rooms/relay-web",
     "relay": "npm run relay --workspace @paseo-rooms/relay-web",

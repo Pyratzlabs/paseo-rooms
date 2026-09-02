@@ -1,7 +1,16 @@
 import type { PluginContext } from "@getpaseo/plugin";
 import { SharePanel } from "./main.client";
-import { listShareSessions, revokeShareSession, shareSession } from "./share.server";
-import { listShareSessionsRpc, revokeShareSessionRpc, shareSessionRpc } from "./share.shared";
+import { closeManagedRoomServer } from "./runtime.server";
+import {
+  listShareSessions,
+  revokeShareSession,
+  shareSession,
+} from "./share.server";
+import {
+  listShareSessionsRpc,
+  revokeShareSessionRpc,
+  shareSessionRpc,
+} from "./share.shared";
 
 /**
  * The compiler splits this entry point in two: `plugin.handle` survives only in
@@ -31,5 +40,7 @@ export default function contribute(plugin: PluginContext) {
       openPanel("share-session");
     },
   });
-  return () => {};
+  return async () => {
+    await closeManagedRoomServer();
+  };
 }

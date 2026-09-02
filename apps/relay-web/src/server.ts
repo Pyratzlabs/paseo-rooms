@@ -34,6 +34,7 @@ import {
   fetchFullHistory,
   listRoomQuestions,
   answerRoomQuestion,
+  closePaseoConnections,
   isConnected,
   sendToAgent,
   subscribeAgent,
@@ -48,8 +49,9 @@ import {
 } from "./presence.js";
 
 const PORT = Number(process.env.PORT ?? 3000);
-const BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
-const BASE_HOST = new URL(BASE_URL).host;
+const LOCAL_BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
+const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ?? LOCAL_BASE_URL;
+const BASE_HOST = new URL(LOCAL_BASE_URL).host;
 const PUBLIC_DIR = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
@@ -358,7 +360,7 @@ function notFound(): ApiResponse {
  */
 export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
   try {
-    const url = new URL(req.path, BASE_URL);
+    const url = new URL(req.path, LOCAL_BASE_URL);
     const parts = url.pathname.split("/").filter(Boolean);
 
     // Local development keeps the same shell as the public relay. The shell is
@@ -418,7 +420,7 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       }
       return json(201, {
         token: room.token,
-        url: publicRoomUrl(room, BASE_URL),
+        url: publicRoomUrl(room, PUBLIC_BASE_URL),
       });
     }
 
@@ -428,7 +430,7 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       return json(200, {
         rooms: listRooms().map((room) => ({
           ...toPublicRoom(room),
-          url: publicRoomUrl(room, BASE_URL),
+          url: publicRoomUrl(room, PUBLIC_BASE_URL),
         })),
       });
     }
@@ -528,7 +530,7 @@ export async function openRoomSocket(
   socket: RoomSocket,
 ): Promise<boolean> {
   if (!isConnected()) return false;
-  const url = new URL(requestPath, BASE_URL);
+  const url = new URL(requestPath, LOCAL_BASE_URL);
   const match = url.pathname.match(/^\/api\/rooms\/([^/]+)\/ws$/);
   const room = match ? getRoom(match[1]) : undefined;
   if (!room || isSecureRoom(room)) return false;
@@ -604,7 +606,7 @@ server.on("upgrade", (req, socket, head) => {
     socket.destroy();
     return;
   }
-  const url = new URL(req.url ?? "/", BASE_URL);
+  const url = new URL(req.url ?? "/", LOCAL_BASE_URL);
   if (url.pathname.startsWith("/v2/rooms/")) {
     v2Wss.handleUpgrade(req, socket, head, (ws) => {
       openAnyRoomSocket(req.url ?? url.pathname, wrapWebSocket(ws)).then(
@@ -634,36 +636,101 @@ server.on("upgrade", (req, socket, head) => {
 
 let relayClient: RelayClient | null = null;
 
-const RELAY_URL = process.env.RELAY_URL;
-const RELAY_KEY = process.env.RELAY_KEY;
-if (RELAY_URL) {
-  if (!RELAY_KEY) {
+export interface LocalRoomServer {
+  baseUrl: string;
+  adminToken: string;
+  close(): Promise<void>;
+}
+
+export interface StartLocalRoomServerOptions {
+  /** Tests can avoid opening a long-lived connection to a real Paseo daemon. */
+  connectDaemon?: boolean;
+}
+
+let localServer: Promise<LocalRoomServer> | null = null;
+
+function startRelayDialOut(): void {
+  const relayUrl = process.env.RELAY_URL;
+  const relayKey = process.env.RELAY_KEY;
+  if (!relayUrl) return;
+  if (!relayKey) {
     console.error(
       "RELAY_URL is set but RELAY_KEY is missing — not dialling out to the relay",
     );
-  } else {
-    relayClient = startRelayClient({
-      url: RELAY_URL,
-      key: RELAY_KEY,
-      minBackoffMs: Number(process.env.RELAY_MIN_BACKOFF_MS ?? 1_000),
-      maxBackoffMs: Number(process.env.RELAY_MAX_BACKOFF_MS ?? 30_000),
-      currentTokens: relayTokens,
-      currentRoutes: relayRoutes,
-      handleRequest: handleApiRequest,
-      openSocket: openAnyRoomSocket,
-    });
+    return;
   }
+  relayClient = startRelayClient({
+    url: relayUrl,
+    key: relayKey,
+    minBackoffMs: Number(process.env.RELAY_MIN_BACKOFF_MS ?? 1_000),
+    maxBackoffMs: Number(process.env.RELAY_MAX_BACKOFF_MS ?? 30_000),
+    currentTokens: relayTokens,
+    currentRoutes: relayRoutes,
+    handleRequest: handleApiRequest,
+    openSocket: openAnyRoomSocket,
+  });
 }
 
-// Boot resilience: start the HTTP listener immediately so /healthz and
-// static routes work even if the daemon is down; connect (with retry) in the
-// background. API routes respond 503 until connected.
-server.listen(PORT, () => {
-  console.log(`paseo-rooms listening on ${BASE_URL}`);
-  console.log(
-    `admin token: data/admin-token (create rooms with "npm run share -- <agent-id>")`,
-  );
-});
-ensureConnected().then(() => {
-  console.log("connected to Paseo daemon");
-});
+async function closeLocalRoomServer(): Promise<void> {
+  if (!localServer) return;
+  localServer = null;
+  relayClient?.close();
+  relayClient = null;
+  await closePaseoConnections();
+  for (const socket of wss.clients) socket.close(1001, "room server stopped");
+  for (const socket of v2Wss.clients) socket.close(1001, "room server stopped");
+  if (!server.listening) {
+    localServer = null;
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+    server.closeAllConnections?.();
+  });
+}
+
+/**
+ * Start the laptop-side room server as a lifecycle-managed service.
+ *
+ * The standalone CLI and the Paseo plugin both use this function. Keeping the
+ * listener in-process lets plugin reload, update, disable, and daemon shutdown
+ * close the matching room runtime instead of leaving a detached child behind.
+ */
+export async function startLocalRoomServer(
+  options: StartLocalRoomServerOptions = {},
+): Promise<LocalRoomServer> {
+  if (localServer) return localServer;
+  localServer = new Promise<LocalRoomServer>((resolve, reject) => {
+    const onError = (error: Error) => {
+      localServer = null;
+      reject(error);
+    };
+    server.once("error", onError);
+    server.listen(PORT, "127.0.0.1", () => {
+      server.off("error", onError);
+      if (options.connectDaemon !== false) startRelayDialOut();
+      console.log(`paseo-rooms listening on ${LOCAL_BASE_URL}`);
+      if (options.connectDaemon !== false) {
+        void ensureConnected()
+          .then(() => console.log("connected to Paseo daemon"))
+          .catch((error) => {
+            // Shutdown deliberately invalidates a pending retry. The plugin
+            // lifecycle already owns that transition, so do not turn it into
+            // an unhandled rejection.
+            if (localServer)
+              console.error("Paseo daemon connection stopped:", error);
+          });
+      }
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : PORT;
+      const baseUrl = new URL(LOCAL_BASE_URL);
+      baseUrl.port = String(port);
+      resolve({
+        baseUrl: baseUrl.toString().replace(/\/$/, ""),
+        adminToken: ADMIN_TOKEN,
+        close: closeLocalRoomServer,
+      });
+    });
+  });
+  return localServer;
+}
