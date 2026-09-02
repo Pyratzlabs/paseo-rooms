@@ -74,6 +74,8 @@ test("quality and behavior checks are separate CI jobs", () => {
   for (const command of [
     "npm run test:relay",
     "npm run test:relay-client",
+    "npm run test:e2ee",
+    "npm run test:e2ee-browser",
     "npm run test:name",
     "npm run test:scroll",
     "npm run test:room-ui",
@@ -101,4 +103,17 @@ test("quality and behavior checks are separate CI jobs", () => {
     packageJson.scripts.lint,
     "npm run lint --workspace @paseo-rooms/relay-web",
   );
+});
+
+test("verification jobs run for merge request pipelines", () => {
+  for (const job of ["quality", "tests", "plugin-verify"]) {
+    assert.match(
+      config,
+      new RegExp(
+        `^${job}:[\\s\\S]*?CI_PIPELINE_SOURCE == "merge_request_event"`,
+        "m",
+      ),
+      `${job} must run in an MR pipeline`,
+    );
+  }
 });

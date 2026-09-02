@@ -35,7 +35,9 @@ interface Browser {
 
 function openBrowser(name: string, token: string): Promise<Browser> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${BASE_URL.replace("http", "ws")}/api/rooms/${token}/ws`);
+    const ws = new WebSocket(
+      `${BASE_URL.replace("http", "ws")}/api/rooms/${token}/ws`,
+    );
     const browser: Browser = { name, ws, events: [] };
     ws.on("message", (data) => {
       const frame = JSON.parse(String(data));
@@ -46,7 +48,11 @@ function openBrowser(name: string, token: string): Promise<Browser> {
   });
 }
 
-async function waitFor(pred: () => boolean, ms: number, label: string): Promise<boolean> {
+async function waitFor(
+  pred: () => boolean,
+  ms: number,
+  label: string,
+): Promise<boolean> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (pred()) return true;
@@ -58,12 +64,19 @@ async function waitFor(pred: () => boolean, ms: number, label: string): Promise<
 
 function sawUserMessage(b: Browser, text: string): boolean {
   return b.events.some(
-    (f) => f.event.type === "timeline" && f.event.item.type === "user_message" && f.event.item.text.includes(text),
+    (f) =>
+      f.event.type === "timeline" &&
+      f.event.item.type === "user_message" &&
+      f.event.item.text.includes(text),
   );
 }
 function sawAssistantText(b: Browser, text: string): boolean {
   const all = b.events
-    .filter((f) => f.event.type === "timeline" && f.event.item.type === "assistant_message")
+    .filter(
+      (f) =>
+        f.event.type === "timeline" &&
+        f.event.item.type === "assistant_message",
+    )
     .map((f) => f.event.item.text)
     .join("");
   return all.includes(text);
@@ -74,7 +87,9 @@ async function main(): Promise<void> {
   const client = await getClient();
 
   // -- setup: a throwaway agent with existing history ------------------------
-  const cwd = process.env.E2E_CWD ?? fs.mkdtempSync(path.join(os.tmpdir(), "paseo-rooms-e2e-"));
+  const cwd =
+    process.env.E2E_CWD ??
+    fs.mkdtempSync(path.join(os.tmpdir(), "paseo-rooms-e2e-"));
   // Prefer a small fast model for the test agent; fall back to the default.
   const { models } = await client.providers.listModels(PROVIDER as never);
   const model =
@@ -91,17 +106,28 @@ async function main(): Promise<void> {
       "includes the token HISTORY-MARKER-1, and from now on always greet each sender by name.",
   } as never);
   const first = await agent.waitForFinish(180_000);
-  check("throwaway agent produced initial history", (first.lastMessage ?? "").includes("HISTORY-MARKER-1"));
+  check(
+    "throwaway agent produced initial history",
+    (first.lastMessage ?? "").includes("HISTORY-MARKER-1"),
+  );
 
   // -- room creation (admin) -------------------------------------------------
-  const adminToken = fs.readFileSync(path.join(DATA_DIR, "admin-token"), "utf8").trim();
+  const adminToken = fs
+    .readFileSync(path.join(DATA_DIR, "admin-token"), "utf8")
+    .trim();
   const createRes = await fetch(`${BASE_URL}/api/rooms`, {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${adminToken}` },
-    body: JSON.stringify({ agentId: agent.id }),
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${adminToken}`,
+    },
+    body: JSON.stringify({ agentId: agent.id, protocol: 1 }),
   });
   check("room created via admin API", createRes.status === 201);
-  const { token, url } = (await createRes.json()) as { token: string; url: string };
+  const { token, url } = (await createRes.json()) as {
+    token: string;
+    url: string;
+  };
   console.log(`  room url: ${url}`);
 
   const noAuth = await fetch(`${BASE_URL}/api/rooms`, {
@@ -117,7 +143,11 @@ async function main(): Promise<void> {
   check(
     "existing history is served to a fresh join",
     histRes.status === 200 &&
-      hist.entries.some((e) => e.item.type === "assistant_message" && e.item.text.includes("HISTORY-MARKER-1")),
+      hist.entries.some(
+        (e) =>
+          e.item.type === "assistant_message" &&
+          e.item.text.includes("HISTORY-MARKER-1"),
+      ),
   );
 
   // -- two "browsers" --------------------------------------------------------
@@ -128,15 +158,26 @@ async function main(): Promise<void> {
   const sendA = await fetch(`${BASE_URL}/api/rooms/${token}/messages`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message: "Hello! Please greet me by my name.", name: "Alice" }),
+    body: JSON.stringify({
+      message: "Hello! Please greet me by my name.",
+      name: "Alice",
+    }),
   });
   check("Alice's send accepted", sendA.status === 202);
 
-  await waitFor(() => sawUserMessage(a, "[Alice]") && sawUserMessage(b, "[Alice]"), 15_000, "Alice's message on both sockets");
+  await waitFor(
+    () => sawUserMessage(a, "[Alice]") && sawUserMessage(b, "[Alice]"),
+    15_000,
+    "Alice's message on both sockets",
+  );
   check("browser A sees Alice's message live", sawUserMessage(a, "[Alice]"));
   check("browser B sees Alice's message live", sawUserMessage(b, "[Alice]"));
 
-  await waitFor(() => sawAssistantText(a, "Alice") && sawAssistantText(b, "Alice"), 120_000, "agent reply to Alice on both sockets");
+  await waitFor(
+    () => sawAssistantText(a, "Alice") && sawAssistantText(b, "Alice"),
+    120_000,
+    "agent reply to Alice on both sockets",
+  );
   check("agent reply streams to browser A", sawAssistantText(a, "Alice"));
   check("agent reply streams to browser B", sawAssistantText(b, "Alice"));
 
@@ -144,34 +185,65 @@ async function main(): Promise<void> {
   const sendB = await fetch(`${BASE_URL}/api/rooms/${token}/messages`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ message: "Hi, I just joined — please greet me by my name too.", name: "Bob", agent_id: "some-other-agent" }),
+    body: JSON.stringify({
+      message: "Hi, I just joined — please greet me by my name too.",
+      name: "Bob",
+      agent_id: "some-other-agent",
+    }),
   });
-  check("Bob's send accepted (extra agent_id field ignored)", sendB.status === 202);
+  check(
+    "Bob's send accepted (extra agent_id field ignored)",
+    sendB.status === 202,
+  );
 
-  await waitFor(() => sawAssistantText(a, "Bob") && sawAssistantText(b, "Bob"), 120_000, "agent reply to Bob on both sockets");
+  await waitFor(
+    () => sawAssistantText(a, "Bob") && sawAssistantText(b, "Bob"),
+    120_000,
+    "agent reply to Bob on both sockets",
+  );
   check("browser A sees Bob's message live", sawUserMessage(a, "[Bob]"));
-  check("agent reply to Bob streams to both browsers", sawAssistantText(a, "Bob") && sawAssistantText(b, "Bob"));
+  check(
+    "agent reply to Bob streams to both browsers",
+    sawAssistantText(a, "Bob") && sawAssistantText(b, "Bob"),
+  );
 
   // -- both messages landed on the same underlying Paseo agent ---------------
-  const page = await agent.timeline.refetch({ direction: "tail", limit: 200, projection: "projected" });
-  const texts = page.entries.filter((e) => e.item.type === "user_message").map((e) => (e.item as any).text as string);
+  const page = await agent.timeline.refetch({
+    direction: "tail",
+    limit: 200,
+    projection: "projected",
+  });
+  const texts = page.entries
+    .filter((e) => e.item.type === "user_message")
+    .map((e) => (e.item as any).text as string);
   check(
     "both humans' messages are on the same Paseo agent timeline",
-    texts.some((t) => t.startsWith("[Alice]")) && texts.some((t) => t.startsWith("[Bob]")),
+    texts.some((t) => t.startsWith("[Alice]")) &&
+      texts.some((t) => t.startsWith("[Bob]")),
   );
 
   // -- reload restores history ----------------------------------------------
-  const reload = (await (await fetch(`${BASE_URL}/api/rooms/${token}/history`)).json()) as { entries: Array<{ item: any }> };
-  const reloadUsers = reload.entries.filter((e) => e.item.type === "user_message").map((e) => e.item.text as string);
+  const reload = (await (
+    await fetch(`${BASE_URL}/api/rooms/${token}/history`)
+  ).json()) as { entries: Array<{ item: any }> };
+  const reloadUsers = reload.entries
+    .filter((e) => e.item.type === "user_message")
+    .map((e) => e.item.text as string);
   check(
     "reload restores full history from Paseo",
     reloadUsers.some((t) => t.startsWith("[Alice]")) &&
       reloadUsers.some((t) => t.startsWith("[Bob]")) &&
-      reload.entries.some((e) => e.item.type === "assistant_message" && e.item.text.includes("HISTORY-MARKER-1")),
+      reload.entries.some(
+        (e) =>
+          e.item.type === "assistant_message" &&
+          e.item.text.includes("HISTORY-MARKER-1"),
+      ),
   );
 
   // -- security --------------------------------------------------------------
-  const bad = await fetch(`${BASE_URL}/api/rooms/definitely-not-a-token/history`);
+  const bad = await fetch(
+    `${BASE_URL}/api/rooms/definitely-not-a-token/history`,
+  );
   check("invalid share token is rejected", bad.status === 404);
   const badSend = await fetch(`${BASE_URL}/api/rooms/nope/messages`, {
     method: "POST",
@@ -180,19 +252,26 @@ async function main(): Promise<void> {
   });
   check("invalid token cannot send messages", badSend.status === 404);
   const badWs = await new Promise<boolean>((resolve) => {
-    const ws = new WebSocket(`${BASE_URL.replace("http", "ws")}/api/rooms/nope/ws`);
+    const ws = new WebSocket(
+      `${BASE_URL.replace("http", "ws")}/api/rooms/nope/ws`,
+    );
     ws.on("open", () => resolve(false));
     ws.on("error", () => resolve(true));
   });
   check("invalid token cannot open the live socket", badWs);
   check(
     "room API never exposes the agent id",
-    !JSON.stringify(await (await fetch(`${BASE_URL}/api/rooms/${token}`)).json()).includes(agent.id),
+    !JSON.stringify(
+      await (await fetch(`${BASE_URL}/api/rooms/${token}`)).json(),
+    ).includes(agent.id),
   );
 
   // -- healthz -----------------------------------------------------------------
   const health = await (await fetch(`${BASE_URL}/healthz`)).json();
-  check("healthz reports ok and daemon connected", health.ok === true && health.daemonConnected === true);
+  check(
+    "healthz reports ok and daemon connected",
+    health.ok === true && health.daemonConnected === true,
+  );
 
   // -- rate limit --------------------------------------------------------------
   console.log("\nexercising the rate limit (11 messages in quick succession)…");
@@ -205,7 +284,10 @@ async function main(): Promise<void> {
     });
     last429 = r.status;
   }
-  check("11th message within the window is rate limited (429)", last429 === 429);
+  check(
+    "11th message within the window is rate limited (429)",
+    last429 === 429,
+  );
 
   // -- revocation ----------------------------------------------------------------
   a.ws.close();
@@ -234,11 +316,14 @@ async function main(): Promise<void> {
   // pile up junk entries in the user's Paseo sidebar.
   const workspaces = await client.workspaces.list({});
   for (const w of workspaces.entries) {
-    if (w.projectRootPath === cwd) await client.workspaces.archive(w.id).catch(() => {});
+    if (w.projectRootPath === cwd)
+      await client.workspaces.archive(w.id).catch(() => {});
   }
   console.log("\nthrowaway agent + workspace archived.");
   await client.close();
-  console.log(`\n${process.exitCode ? "FAILED" : "PASSED"} (${passed} checks ok)`);
+  console.log(
+    `\n${process.exitCode ? "FAILED" : "PASSED"} (${passed} checks ok)`,
+  );
   process.exit(process.exitCode ?? 0);
 }
 

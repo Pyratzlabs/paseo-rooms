@@ -37,7 +37,7 @@ quality:
       - apps/relay-web/public/
     expire_in: 1 day
   rules:
-    - if: $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
 
 tests:
   stage: test
@@ -49,6 +49,8 @@ tests:
     - npm run build:web
     - npm run test:relay
     - npm run test:relay-client
+    - npm run test:e2ee
+    - npm run test:e2ee-browser
     - npm run test:name
     - npm run test:scroll
     - npm run test:room-ui
@@ -59,7 +61,7 @@ tests:
     - npm run test:ci
     - npm run test:lock
   rules:
-    - if: $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
 
 plugin-verify:
   stage: test
@@ -71,7 +73,7 @@ plugin-verify:
     - npm run test:plugin
     - npm run typecheck:plugin
   rules:
-    - if: $CI_PIPELINE_SOURCE == "push"
+    - if: $CI_PIPELINE_SOURCE == "push" || $CI_PIPELINE_SOURCE == "merge_request_event"
 
 deploy:
   stage: deploy

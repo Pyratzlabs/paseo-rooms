@@ -64,7 +64,7 @@ test("the public root is a responsive, accessible Paseo Rooms landing page", () 
   assert.match(server, /landingAssetResponse/);
   assert.match(server, /parts\[0\] === "landing"/);
   assert.match(relay, /staticDocument\(res, "index\.html"\)/);
-  assert.match(relay, /safeAsset\(res, "landing"/);
+  assert.match(relay, /safeAsset\(\s*res,\s*"landing"/);
 });
 
 test("the public room is a Vite entry with relay-owned immutable assets", () => {
@@ -85,6 +85,17 @@ test("the React room keeps live, error, question, and composer behavior", () => 
   assert.match(app, /roomSocket\(token\)/);
   assert.match(timeline, /permission_requested/);
   assert.match(timeline, /The agent needs the host to respond in Paseo/);
+});
+
+test("secure rooms submit only through their encrypted session", () => {
+  assert.doesNotMatch(
+    app,
+    /try \{\s*await api\.(message|answer|answerPrompts)/,
+  );
+  assert.match(app, /if \(secureInvite\.current\) \{/);
+  assert.match(app, /await session\.sendMessage\(message\)/);
+  assert.match(app, /await session\.answer\(question\.id, actionId\)/);
+  assert.match(app, /await session\.answerPrompts\(question\.id, answers\)/);
 });
 
 test("the React room gates live participation on a name and renders presence", () => {

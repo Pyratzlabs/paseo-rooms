@@ -2,3 +2,4 @@ node_modules/
 data/
 *.log
 apps/relay-web/public/assets/
+apps/relay-web/.e2ee-smoke/

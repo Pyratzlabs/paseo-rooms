@@ -11,13 +11,24 @@
  */
 
 import { WebSocket } from "ws";
-import { PROTOCOL_VERSION, type LaptopFrame, type RelayFrame } from "./relay/protocol.js";
+import {
+  matchPublicRoute,
+  MAX_HOST_CONTROL_BYTES,
+  MAX_V2_RELAY_EVENT_B64_CHARS,
+  parseV2OuterRecord,
+  PROTOCOL_VERSION,
+  type LaptopFrame,
+  type RegisteredRoute,
+  type RelayFrame,
+  type RoomProtocolVersion,
+} from "./relay/protocol.js";
 
 /**
  * Parse a frame received from the relay. Mirror image of the relay's
  * `parseLaptopFrame`: anything malformed is dropped rather than trusted.
  */
 function parseRelayFrame(raw: string): RelayFrame | null {
+  if (Buffer.byteLength(raw, "utf8") > MAX_HOST_CONTROL_BYTES) return null;
   let msg: unknown;
   try {
     msg = JSON.parse(raw);
@@ -30,7 +41,12 @@ function parseRelayFrame(raw: string): RelayFrame | null {
 
   switch (f.type) {
     case "http_request":
-      if (typeof f.id !== "string" || typeof f.method !== "string" || typeof f.path !== "string") return null;
+      if (
+        typeof f.id !== "string" ||
+        typeof f.method !== "string" ||
+        typeof f.path !== "string"
+      )
+        return null;
       return {
         v: 1,
         type: "http_request",
@@ -42,7 +58,8 @@ function parseRelayFrame(raw: string): RelayFrame | null {
       };
     case "ws_event":
       if (typeof f.id !== "string") return null;
-      if (f.event !== "open" && f.event !== "message" && f.event !== "close") return null;
+      if (f.event !== "open" && f.event !== "message" && f.event !== "close")
+        return null;
       return {
         v: 1,
         type: "ws_event",
@@ -54,7 +71,9 @@ function parseRelayFrame(raw: string): RelayFrame | null {
     case "ping":
       return { v: 1, type: "ping", t: typeof f.t === "number" ? f.t : 0 };
     case "register_rejected":
-      return typeof f.token === "string" ? { v: 1, type: "register_rejected", token: f.token } : null;
+      return typeof f.token === "string"
+        ? { v: 1, type: "register_rejected", token: f.token }
+        : null;
     default:
       return null;
   }
@@ -64,7 +83,9 @@ function isHeaders(value: unknown): value is Record<string, string> {
   return (
     typeof value === "object" &&
     value !== null &&
-    Object.values(value as Record<string, unknown>).every((v) => typeof v === "string")
+    Object.values(value as Record<string, unknown>).every(
+      (v) => typeof v === "string",
+    )
   );
 }
 
@@ -105,6 +126,8 @@ export interface RelayClientHooks {
   openSocket(path: string, socket: RoomSocket): Promise<boolean>;
   /** All room tokens that currently exist, re-sent on every (re)connect. */
   currentTokens(): string[];
+  /** Explicit protocol-aware routes, registered alongside legacy v1 tokens. */
+  currentRoutes?(): RegisteredRoute[];
 }
 
 export interface RelayClientOptions extends RelayClientHooks {
@@ -122,6 +145,9 @@ export interface RelayClient {
   register(tokens: string[]): void;
   /** Release tokens (call on revocation). */
   unregister(tokens: string[]): void;
+  /** Claim protocol-aware routes (used by v2 once secure rooms exist). */
+  registerRoutes(routes: RegisteredRoute[]): void;
+  unregisterRoutes(routes: RegisteredRoute[]): void;
   connected(): boolean;
   close(): void;
 }
@@ -148,11 +174,20 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     private handlers: Array<() => void> = [];
     private messageHandlers: Array<(data: string) => void> = [];
 
-    constructor(readonly id: string) {}
+    constructor(
+      readonly id: string,
+      readonly protocol: RoomProtocolVersion,
+    ) {}
 
     send(data: string): void {
       if (this.closed) return;
-      send({ v: 1, type: "ws_event", id: this.id, event: "message", dataB64: Buffer.from(data).toString("base64") });
+      send({
+        v: 1,
+        type: "ws_event",
+        id: this.id,
+        event: "message",
+        dataB64: Buffer.from(data).toString("base64"),
+      });
     }
 
     /** Close initiated by us (revocation, subscription failure): tell the relay. */
@@ -182,7 +217,8 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     }
 
     receive(data: string): void {
-      if (!this.closed) for (const handler of this.messageHandlers) handler(data);
+      if (!this.closed)
+        for (const handler of this.messageHandlers) handler(data);
     }
   }
 
@@ -193,18 +229,31 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
 
   function connect(): void {
     if (stopped) return;
-    const socket = new WebSocket(options.url, { headers: { "x-relay-key": options.key } });
+    const socket = new WebSocket(options.url, {
+      headers: { "x-relay-key": options.key },
+    });
     ws = socket;
 
     socket.on("open", () => {
       backoff = minBackoff;
-      const tokens = options.currentTokens();
-      log(`[relay-client] connected to ${options.url} (registering ${tokens.length} token(s))`);
-      if (tokens.length > 0) send({ v: 1, type: "register", tokens });
+      const routes = options.currentRoutes?.() ?? [];
+      const routedTokens = new Set(routes.map((route) => route.token));
+      const tokens = options
+        .currentTokens()
+        .filter((token) => !routedTokens.has(token));
+      const count = tokens.length + routes.length;
+      log(
+        `[relay-client] connected to ${options.url} (registering ${count} route(s))`,
+      );
+      if (routes && routes.length > 0)
+        send({ v: 1, type: "register", tokens, routes });
+      else if (tokens.length > 0) send({ v: 1, type: "register", tokens });
     });
 
     socket.on("message", (data) => {
-      const frame = parseRelayFrame(typeof data === "string" ? data : data.toString());
+      const frame = parseRelayFrame(
+        typeof data === "string" ? data : data.toString(),
+      );
       if (!frame) return;
 
       switch (frame.type) {
@@ -213,7 +262,9 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
           break;
 
         case "register_rejected":
-          log(`[relay-client] token ${frame.token} is claimed by another room server`);
+          log(
+            `[relay-client] token ${frame.token} is claimed by another room server`,
+          );
           break;
 
         case "http_request":
@@ -231,7 +282,10 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
                 status: 500,
                 headers: { "content-type": "application/json" },
                 body: Buffer.from(
-                  JSON.stringify({ error: err instanceof Error ? err.message : "internal error" }),
+                  JSON.stringify({
+                    error:
+                      err instanceof Error ? err.message : "internal error",
+                  }),
                 ),
               };
             }
@@ -248,7 +302,12 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
 
         case "ws_event":
           if (frame.event === "open") {
-            const virtual = new VirtualSocket(frame.id);
+            const route = matchPublicRoute(
+              new URL(frame.path ?? "/", "http://relay.invalid").pathname,
+              true,
+            );
+            if (!route) return;
+            const virtual = new VirtualSocket(frame.id, route.protocol);
             sockets.set(frame.id, virtual);
             void options
               .openSocket(frame.path ?? "/", virtual)
@@ -257,8 +316,18 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
               })
               .catch(() => virtual.close());
           } else if (frame.event === "message") {
-            if (frame.dataB64 && frame.dataB64.length <= 4096) {
-              sockets.get(frame.id)?.receive(Buffer.from(frame.dataB64, "base64").toString("utf8"));
+            const socket = sockets.get(frame.id);
+            const maximum =
+              socket?.protocol === 2 ? MAX_V2_RELAY_EVENT_B64_CHARS : 4096;
+            if (frame.dataB64 && frame.dataB64.length <= maximum) {
+              const data = Buffer.from(frame.dataB64, "base64").toString(
+                "utf8",
+              );
+              if (socket?.protocol === 2 && !parseV2OuterRecord(data)) {
+                socket.close();
+                return;
+              }
+              socket?.receive(data);
             }
           } else {
             sockets.get(frame.id)?.remoteClosed();
@@ -294,6 +363,14 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     },
     unregister: (tokens) => {
       if (tokens.length > 0) send({ v: 1, type: "unregister", tokens });
+    },
+    registerRoutes: (routes) => {
+      if (routes.length > 0)
+        send({ v: 1, type: "register", tokens: [], routes });
+    },
+    unregisterRoutes: (routes) => {
+      if (routes.length > 0)
+        send({ v: 1, type: "unregister", tokens: [], routes });
     },
     connected: () => ws !== null && ws.readyState === WebSocket.OPEN,
     close: () => {

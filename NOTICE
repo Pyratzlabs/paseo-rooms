@@ -1,0 +1,8 @@
+Paseo Rooms is licensed under the GNU Affero General Public License,
+version 3 or later (SPDX: AGPL-3.0-or-later).
+
+This project uses the Paseo client and relay packages:
+https://github.com/getpaseo/paseo
+
+Third-party components remain subject to their own licence terms. See
+package-lock.json for the resolved dependency graph.
