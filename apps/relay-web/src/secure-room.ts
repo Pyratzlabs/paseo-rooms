@@ -387,11 +387,13 @@ export async function openSecureRoomSocket(
   }
   pendingHandshakes.set(room.token, pendingCount + 1);
   let releasedPending = false;
-  let handshakeTimeout: ReturnType<typeof setTimeout> | null = null;
+  const handshakeTimeout = setTimeout(() => {
+    if (!releasedPending) socket.close(1008, "handshake timeout");
+  }, HANDSHAKE_TIMEOUT_MS);
   const releasePending = () => {
     if (releasedPending) return;
     releasedPending = true;
-    if (handshakeTimeout) clearTimeout(handshakeTimeout);
+    clearTimeout(handshakeTimeout);
     const remaining = (pendingHandshakes.get(room.token) ?? 1) - 1;
     if (remaining > 0) pendingHandshakes.set(room.token, remaining);
     else pendingHandshakes.delete(room.token);
@@ -465,10 +467,6 @@ export async function openSecureRoomSocket(
     releasePending();
     throw error;
   }
-  handshakeTimeout = setTimeout(() => {
-    if (!releasedPending) channel.close(1008, "handshake timeout");
-  }, HANDSHAKE_TIMEOUT_MS);
-
   const admit = async (data: string | ArrayBuffer): Promise<void> => {
     const join = parseJoinRecord(data);
     const name = sanitizeParticipantName(join?.displayName);

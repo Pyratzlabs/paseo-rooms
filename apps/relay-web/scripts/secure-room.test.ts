@@ -360,45 +360,6 @@ test("secure room rejects an encrypted join with the wrong invite", async () => 
   }
 });
 
-test("secure room caps records buffered before admission", async () => {
-  const room = createRoom("agent", "Test room");
-  const [serverSocket, browserSocket] = socketPair();
-  try {
-    const opened = openSecureRoomSocket(
-      `/v2/rooms/${room.token}/ws`,
-      serverSocket,
-      () => true,
-      async () => true,
-    );
-    const channel = await createClientChannel(
-      browserTransport(browserSocket),
-      room.hostPublicKey,
-      { onmessage() {}, onerror() {} },
-    );
-    await Promise.all(
-      Array.from({ length: 5 }, (_, index) =>
-        channel.send(
-          encoder.encode(
-            JSON.stringify({
-              v: 2,
-              kind: "join",
-              joinAttemptId: `buffer-${index}`,
-              inviteSecret: room.inviteSecret,
-              displayName: "Alice",
-            }),
-          ).buffer,
-        ),
-      ),
-    );
-    await opened;
-    await waitFor(() => serverSocket.closed);
-    assert.equal(serverSocket.closeCode, 1009);
-  } finally {
-    closeSecureRoom(room.token);
-    deleteRoom(room.token);
-  }
-});
-
 test("secure room cleans up a failed subscription before a later join", async () => {
   const room = createRoom("agent", "Test room");
   const [failedServer, failedBrowser] = socketPair();

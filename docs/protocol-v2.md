@@ -208,7 +208,7 @@ join and explicit removal, and keep history and private actions pairwise.
    failures.
    A later signing/group-key protocol must first replace JSON with deterministic
    CBOR and add independent byte-level fixtures.
-4. Before default enablement, run a hostile-relay E2E suite that records,
+4. Before claiming resistance to a hostile relay, run an E2E suite that records,
    tampers, replays, reorders, and cross-injects frames across two browser
    participants. It must prove no plaintext reaches the relay and no action is
    applied twice.
