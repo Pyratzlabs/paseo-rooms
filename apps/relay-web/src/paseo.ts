@@ -19,6 +19,9 @@ const PASEO_PASSWORD = process.env.PASEO_PASSWORD;
 let client: PaseoClient | null = null;
 let connecting: Promise<PaseoClient> | null = null;
 let permissionClient: DaemonClient | null = null;
+let connectionEpoch = 0;
+let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryWake: (() => void) | null = null;
 
 /** True once the daemon connection has been established at least once. */
 export function isConnected(): boolean {
@@ -35,32 +38,93 @@ async function connect(): Promise<PaseoClient> {
   return c;
 }
 
+function waitForRetry(delay: number): Promise<void> {
+  return new Promise((resolve) => {
+    retryWake = resolve;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      retryWake = null;
+      resolve();
+    }, delay);
+  });
+}
+
+async function closeQuietly(
+  value: { close(): Promise<void> } | null,
+): Promise<void> {
+  if (!value) return;
+  try {
+    await value.close();
+  } catch {
+    // Best-effort shutdown; callers are already leaving the local runtime.
+  }
+}
+
+export async function closePaseoConnections(): Promise<void> {
+  connectionEpoch += 1;
+  if (retryTimer) clearTimeout(retryTimer);
+  retryTimer = null;
+  retryWake?.();
+  retryWake = null;
+
+  const activeClient = client;
+  const activePermissionClient = permissionClient;
+  client = null;
+  connecting = null;
+  permissionClient = null;
+  handles.clear();
+
+  await Promise.all([
+    closeQuietly(activeClient),
+    closeQuietly(activePermissionClient),
+  ]);
+}
+
 /**
  * Connect to the daemon, retrying forever with backoff in the background if
- * it's unreachable. Never throws; resolves once connected. Safe to call
- * repeatedly (e.g. from a boot loop) — concurrent callers share one attempt.
+ * it's unreachable. Resolves once connected and only rejects if the managed
+ * local room runtime is explicitly stopped. Safe to call repeatedly (e.g. from
+ * a boot loop) — concurrent callers share one attempt.
  */
 export async function ensureConnected(): Promise<PaseoClient> {
   if (client) return client;
   if (!connecting) {
-    connecting = (async () => {
+    const epoch = connectionEpoch;
+    const state: { attempt?: Promise<PaseoClient> } = {};
+    const clearIfCurrent = () => {
+      if (connecting === state.attempt) connecting = null;
+    };
+    state.attempt = (async () => {
       let delay = 1000;
       for (;;) {
         try {
           const c = await connect();
+          if (epoch !== connectionEpoch) {
+            await closeQuietly(c);
+            throw new Error("Paseo daemon connection stopped");
+          }
           client = c;
-          connecting = null;
+          clearIfCurrent();
           return c;
         } catch (err) {
+          if (epoch !== connectionEpoch) {
+            clearIfCurrent();
+            throw err;
+          }
           console.error(
             `could not connect to Paseo daemon (retrying in ${Math.round(delay / 1000)}s):`,
             err instanceof Error ? err.message : err,
           );
-          await new Promise((r) => setTimeout(r, delay));
+          await waitForRetry(delay);
+          if (epoch !== connectionEpoch) {
+            clearIfCurrent();
+            throw new Error("Paseo daemon connection stopped");
+          }
           delay = Math.min(delay * 2, 30_000);
         }
       }
     })();
+    connecting = state.attempt;
   }
   return connecting;
 }
@@ -77,7 +141,9 @@ export async function getClient(): Promise<PaseoClient> {
 
 const handles = new Map<string, PaseoAgentHandle>();
 
-export async function getAgentHandle(agentId: string): Promise<PaseoAgentHandle> {
+export async function getAgentHandle(
+  agentId: string,
+): Promise<PaseoAgentHandle> {
   const c = await getClient();
   let handle = handles.get(agentId);
   if (!handle) {
@@ -96,7 +162,10 @@ export interface TimelineEntry {
  * Pages backwards from the tail until the beginning of the timeline (or `cap`
  * entries), so a fresh browser gets the whole conversation.
  */
-export async function fetchFullHistory(agentId: string, cap = 1000): Promise<TimelineEntry[]> {
+export async function fetchFullHistory(
+  agentId: string,
+  cap = 1000,
+): Promise<TimelineEntry[]> {
   const agent = await getAgentHandle(agentId);
   const pageSize = 200;
   let page = await agent.timeline.refetch({
@@ -119,19 +188,29 @@ export async function fetchFullHistory(agentId: string, cap = 1000): Promise<Tim
 
 export type StreamHandler = (event: PaseoAgentStream) => void;
 
-export async function subscribeAgent(agentId: string, handler: StreamHandler): Promise<() => void> {
+export async function subscribeAgent(
+  agentId: string,
+  handler: StreamHandler,
+): Promise<() => void> {
   const agent = await getAgentHandle(agentId);
   return agent.timeline.subscribe(handler);
 }
 
-export async function sendToAgent(agentId: string, text: string): Promise<void> {
+export async function sendToAgent(
+  agentId: string,
+  text: string,
+): Promise<void> {
   const agent = await getAgentHandle(agentId);
   await agent.send(text);
 }
 
 export async function agentInfo(
   agentId: string,
-): Promise<{ title: string | null; status: string | null; provider: string | null } | null> {
+): Promise<{
+  title: string | null;
+  status: string | null;
+  provider: string | null;
+} | null> {
   const agent = await getAgentHandle(agentId);
   const result = await agent.refresh();
   if (!result) return null;
@@ -140,10 +219,16 @@ export async function agentInfo(
     status?: string | null;
     provider?: string | null;
   };
-  return { title: title ?? null, status: status ?? null, provider: provider ?? null };
+  return {
+    title: title ?? null,
+    status: status ?? null,
+    provider: provider ?? null,
+  };
 }
 
-export async function listRoomQuestions(agentId: string): Promise<RoomQuestion[]> {
+export async function listRoomQuestions(
+  agentId: string,
+): Promise<RoomQuestion[]> {
   const agent = await getAgentHandle(agentId);
   const snapshot = await agent.refresh();
   const pending = snapshot?.agent.pendingPermissions ?? [];
@@ -161,14 +246,23 @@ export async function answerRoomQuestion(
 ): Promise<boolean> {
   const agent = await getAgentHandle(agentId);
   const snapshot = await agent.refresh();
-  const request = snapshot?.agent.pendingPermissions.find((pending) => pending.id === requestId);
+  const request = snapshot?.agent.pendingPermissions.find(
+    (pending) => pending.id === requestId,
+  );
   if (!request) return false;
   const updatedInput = buildRoomQuestionUpdatedInput(request, response);
   const actionId = response.actionId;
-  const behavior = updatedInput ? "allow" : roomQuestionActionBehavior(request, actionId);
+  const behavior = updatedInput
+    ? "allow"
+    : roomQuestionActionBehavior(request, actionId);
   if (!behavior) return false;
   if (!permissionClient) {
-    permissionClient = new DaemonClient({ url: PASEO_URL, password: PASEO_PASSWORD, clientType: "cli", clientId: "paseo-rooms" });
+    permissionClient = new DaemonClient({
+      url: PASEO_URL,
+      password: PASEO_PASSWORD,
+      clientType: "cli",
+      clientId: "paseo-rooms",
+    });
     await permissionClient.connect();
   }
   await permissionClient.respondToPermission(

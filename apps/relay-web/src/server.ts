@@ -34,6 +34,7 @@ import {
   fetchFullHistory,
   listRoomQuestions,
   answerRoomQuestion,
+  closePaseoConnections,
   isConnected,
   sendToAgent,
   subscribeAgent,
@@ -675,6 +676,7 @@ async function closeLocalRoomServer(): Promise<void> {
   localServer = null;
   relayClient?.close();
   relayClient = null;
+  await closePaseoConnections();
   for (const socket of wss.clients) socket.close(1001, "room server stopped");
   for (const socket of v2Wss.clients) socket.close(1001, "room server stopped");
   if (!server.listening) {
@@ -709,7 +711,15 @@ export async function startLocalRoomServer(
       if (options.connectDaemon !== false) startRelayDialOut();
       console.log(`paseo-rooms listening on ${LOCAL_BASE_URL}`);
       if (options.connectDaemon !== false) {
-        ensureConnected().then(() => console.log("connected to Paseo daemon"));
+        void ensureConnected()
+          .then(() => console.log("connected to Paseo daemon"))
+          .catch((error) => {
+            // Shutdown deliberately invalidates a pending retry. The plugin
+            // lifecycle already owns that transition, so do not turn it into
+            // an unhandled rejection.
+            if (localServer)
+              console.error("Paseo daemon connection stopped:", error);
+          });
       }
       const address = server.address();
       const port = typeof address === "object" && address ? address.port : PORT;

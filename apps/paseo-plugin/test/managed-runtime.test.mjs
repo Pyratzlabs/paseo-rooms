@@ -49,5 +49,6 @@ test("the plugin owns an in-process local room runtime", () => {
   assert.match(runtime, /PASEO_ROOMS_RELAY_KEY is required/);
   assert.match(runtime, /close\(\)/);
   assert.match(localServer, /export async function startLocalRoomServer/);
+  assert.match(localServer, /closePaseoConnections/);
   assert.match(localServer, /PUBLIC_BASE_URL/);
 });
