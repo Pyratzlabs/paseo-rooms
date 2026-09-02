@@ -1,10 +1,10 @@
-import { createClientChannel } from "./paseo-e2ee";
+import { createClientChannel } from "./paseo-e2ee.js";
 import type {
   RoomInfo,
   RoomParticipant,
   TimelineItem,
   StreamEvent,
-} from "./api";
+} from "./api.js";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -177,6 +177,7 @@ function isStreamEvent(value: unknown): value is StreamEvent {
   if (!isRecord(value) || typeof value.type !== "string") return false;
   if (value.type === "timeline") return isTimelineItem(value.item);
   if (
+    value.type === "thread_started" ||
     value.type === "turn_started" ||
     value.type === "turn_completed" ||
     value.type === "turn_canceled"
@@ -185,7 +186,23 @@ function isStreamEvent(value: unknown): value is StreamEvent {
   if (value.type === "turn_failed")
     return value.error === undefined || typeof value.error === "string";
   if (value.type === "permission_requested") return true;
-  return value.type === "permission_resolved";
+  return (
+    value.type === "permission_resolved" || value.type === "attention_required"
+  );
+}
+
+function isKnownStreamEventType(type: string): boolean {
+  return [
+    "timeline",
+    "thread_started",
+    "turn_started",
+    "turn_completed",
+    "turn_canceled",
+    "turn_failed",
+    "permission_requested",
+    "permission_resolved",
+    "attention_required",
+  ].includes(type);
 }
 
 function parseWelcome(payload: unknown): SecureWelcome | null {
@@ -207,7 +224,10 @@ function parseWelcome(payload: unknown): SecureWelcome | null {
   };
 }
 
-function parseEvent(payload: unknown): SecureEvent | null {
+type ParsedSecureEvent = SecureEvent | "unsupported" | null;
+
+/** Parse supported stream events while distinguishing bad data from new kinds. */
+export function parseSecureStreamEvent(payload: unknown): ParsedSecureEvent {
   if (!isRecord(payload) || typeof payload.type !== "string") return null;
   if (payload.type === "presence" && Array.isArray(payload.participants)) {
     const participants = payload.participants.filter(isParticipant);
@@ -225,6 +245,10 @@ function parseEvent(payload: unknown): SecureEvent | null {
         ? { timestamp: payload.timestamp }
         : {}),
     };
+  }
+  if (payload.type === "stream" && isRecord(payload.event)) {
+    if (typeof payload.event.type !== "string") return null;
+    return isKnownStreamEventType(payload.event.type) ? null : "unsupported";
   }
   return null;
 }
@@ -335,9 +359,15 @@ export async function connectSecureRoom(
           handlers.onWelcome(welcome);
           return;
         }
-        const event = parseEvent(record.payload);
-        if (!sessionId || !event) throw new Error("invalid secure room event");
-        handlers.onEvent(event);
+        if (!sessionId) throw new Error("secure event before welcome");
+        const event = parseSecureStreamEvent(record.payload);
+        // Paseo can add timeline event kinds independently of this renderer.
+        // They are authenticated by the room channel, so an event we do not
+        // render must not tear down collaboration (and prevent sending) for
+        // every connected guest. Malformed envelopes were already rejected by
+        // parseSecureRecord above.
+        if (event === null) throw new Error("invalid secure room event");
+        if (event !== "unsupported") handlers.onEvent(event);
       } catch (error) {
         handlers.onError(
           error instanceof Error ? error : new Error(String(error)),
