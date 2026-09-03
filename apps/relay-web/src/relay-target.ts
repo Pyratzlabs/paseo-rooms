@@ -73,3 +73,16 @@ export function relayKeyCompatibilityError(
   }
   return null;
 }
+
+/** A default relay may still have legacy (v1) tokens after its last v2 room. */
+export function relayHasActiveRooms(
+  relayOrigin: string,
+  configuredRelayOrigin: string | null,
+  secureRouteCount: number,
+  legacyTokenCount: number,
+): boolean {
+  return (
+    secureRouteCount > 0 ||
+    (relayOrigin === configuredRelayOrigin && legacyTokenCount > 0)
+  );
+}

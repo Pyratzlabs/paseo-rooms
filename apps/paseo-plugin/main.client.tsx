@@ -176,10 +176,12 @@ export function SharePanel({ theme, agentId }: PluginAgentPanelProps) {
     shareMutation.mutate({
       agentId,
       label: agent?.title ?? undefined,
-      relayOrigin: normalizedRelayOrigin,
-      ...(normalizedRelayOrigin === DEFAULT_RELAY_ORIGIN || !relayKey
+      // Omit the hosted preset so the local server can use its configured
+      // default relay. This keeps self-hosted deployments configurable without
+      // making the plugin know their server-side relay endpoint or key.
+      ...(normalizedRelayOrigin === DEFAULT_RELAY_ORIGIN
         ? {}
-        : { relayKey }),
+        : { relayOrigin: normalizedRelayOrigin, relayKey }),
     });
   }, [shareMutation, agentId, agent?.title, normalizedRelayOrigin, relayKey]);
 

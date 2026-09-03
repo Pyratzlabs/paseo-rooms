@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   legacyRoomUsesConfiguredRelay,
   normalizeRelayOrigin,
+  relayHasActiveRooms,
   relayHostUrl,
   relayKeyCompatibilityError,
 } from "../src/relay-target.js";
@@ -53,4 +54,34 @@ test("a changed relay key is rejected before allocating another active route", (
   );
   assert.equal(relayKeyCompatibilityError("old-key", "new-key", 0), null);
   assert.equal(relayKeyCompatibilityError("same-key", "same-key", 1), null);
+});
+
+test("the default relay stays connected while legacy rooms remain", () => {
+  assert.equal(
+    relayHasActiveRooms(
+      "wss://relay.example.test",
+      "wss://relay.example.test",
+      0,
+      1,
+    ),
+    true,
+  );
+  assert.equal(
+    relayHasActiveRooms(
+      "wss://private-relay.example.test",
+      "wss://relay.example.test",
+      0,
+      1,
+    ),
+    false,
+  );
+  assert.equal(
+    relayHasActiveRooms(
+      "wss://relay.example.test",
+      "wss://relay.example.test",
+      1,
+      0,
+    ),
+    true,
+  );
 });

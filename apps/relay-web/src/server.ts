@@ -43,6 +43,7 @@ import type { RoomQuestionResponse } from "./questions.js";
 import { MAX_V2_RECORD_BYTES } from "./relay/protocol.js";
 import {
   legacyRoomUsesConfiguredRelay,
+  relayHasActiveRooms,
   normalizeRelayOrigin,
   relayHostUrl,
   relayKeyCompatibilityError,
@@ -502,7 +503,15 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       const client = relayOrigin ? relayClients.get(relayOrigin) : undefined;
       client?.client.unregister([parts[2]]);
       client?.client.unregisterRoutes([{ token: parts[2], protocol: 2 }]);
-      if (relayOrigin && relayRoutes(relayOrigin).length === 0) {
+      if (
+        relayOrigin &&
+        !relayHasActiveRooms(
+          relayOrigin,
+          defaultRelayOrigin(),
+          relayRoutes(relayOrigin).length,
+          relayTokens().length,
+        )
+      ) {
         client?.client.close();
         relayClients.delete(relayOrigin);
       }
