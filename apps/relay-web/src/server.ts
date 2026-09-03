@@ -433,20 +433,23 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       const relayOrigin = requestedRelay
         ? normalizeRelayOrigin(requestedRelay)
         : defaultRelayOrigin();
-      if (!relayOrigin)
+      if (requestedRelay && !relayOrigin)
         return json(400, { error: "a valid relay origin is required" });
       const configuredRelayOrigin = defaultRelayOrigin();
       const relayKey =
-        typeof body.relayKey === "string" && body.relayKey.length > 0
+        relayOrigin &&
+        typeof body.relayKey === "string" &&
+        body.relayKey.length > 0
           ? body.relayKey
           : relayOrigin === configuredRelayOrigin
             ? process.env.RELAY_KEY
             : undefined;
-      if (!relayKey)
+      if (relayOrigin && !relayKey)
         return json(400, { error: "a host registration key is required" });
       const isLegacyRequest = body.protocol === 1;
       if (
         isLegacyRequest &&
+        relayOrigin &&
         !legacyRoomUsesConfiguredRelay(relayOrigin, configuredRelayOrigin)
       ) {
         return json(400, {
@@ -455,23 +458,27 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       }
       // This is deliberately before createRoom(): a rejected credential
       // change must not leave an unregistered room in the local registry.
-      assertRelayKeyCompatible(relayOrigin, relayKey);
+      if (relayOrigin && relayKey) {
+        assertRelayKeyCompatible(relayOrigin, relayKey);
+      }
       const room = isLegacyRequest
         ? createLegacyRoom(agentId, label)
-        : createRoom(agentId, label, relayOrigin);
-      try {
-        if (isSecureRoom(room)) {
-          relayClientFor(relayOrigin, relayKey).registerRoutes([
-            { token: room.token, protocol: 2 },
-          ]);
-        } else {
-          relayClientFor(relayOrigin, relayKey).register([room.token]);
+        : createRoom(agentId, label, relayOrigin ?? undefined);
+      if (relayOrigin && relayKey) {
+        try {
+          if (isSecureRoom(room)) {
+            relayClientFor(relayOrigin, relayKey).registerRoutes([
+              { token: room.token, protocol: 2 },
+            ]);
+          } else {
+            relayClientFor(relayOrigin, relayKey).register([room.token]);
+          }
+        } catch (error) {
+          // A client setup failure (including a changed registration key) must
+          // not leave a local link whose relay route was never registered.
+          deleteRoom(room.token);
+          throw error;
         }
-      } catch (error) {
-        // A client setup failure (including a changed registration key) must
-        // not leave a local link whose relay route was never registered.
-        deleteRoom(room.token);
-        throw error;
       }
       return json(201, {
         token: room.token,

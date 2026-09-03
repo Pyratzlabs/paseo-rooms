@@ -24,8 +24,11 @@ export interface SecureRoom {
   inviteSecret: string;
   hostPublicKey: string;
   hostKeyPair: KeyPair;
-  /** Canonical ws(s) origin selected when this room was created. */
-  relayOrigin: string;
+  /**
+   * Canonical ws(s) origin selected when this room was created. Omitted for
+   * a local-only room, which is served directly by the host room server.
+   */
+  relayOrigin?: string;
   seenJoinAttemptIds: string[];
   seenClientRecordIds: string[];
 }
@@ -71,7 +74,7 @@ function persist(): void {
 export function createRoom(
   agentId: string,
   label: string,
-  relayOrigin = "wss://paseo-rooms.pyratzlabs.fr",
+  relayOrigin?: string,
 ): SecureRoom {
   const hostKeyPair = generateKeyPair();
   const room: SecureRoom = {
@@ -133,7 +136,10 @@ export function toPublicRoom(room: AnyRoom): PublicRoom {
 export function publicRoomUrl(room: AnyRoom, baseUrl: string): string {
   const url = `${baseUrl}/r/${room.token}`;
   if (!isSecureRoom(room)) return url;
-  return `${url}#v=2&i=${encodeURIComponent(room.inviteSecret)}&hp=${encodeURIComponent(room.hostPublicKey)}&relay=${encodeURIComponent(room.relayOrigin)}`;
+  const invite = `${url}#v=2&i=${encodeURIComponent(room.inviteSecret)}&hp=${encodeURIComponent(room.hostPublicKey)}`;
+  return room.relayOrigin
+    ? `${invite}&relay=${encodeURIComponent(room.relayOrigin)}`
+    : invite;
 }
 
 export function listRooms(): AnyRoom[] {

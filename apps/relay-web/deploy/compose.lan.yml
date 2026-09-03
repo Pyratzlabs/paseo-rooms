@@ -5,7 +5,9 @@
 #
 #   RELAY_KEY=... docker compose -f compose.lan.yml up -d
 #
-# Laptop side then dials: RELAY_URL=ws://<vm-ip>:8080/host RELAY_KEY=... npm start
+# Put a TLS reverse proxy in front of this stack before using it from a browser
+# client. Laptop side then dials: RELAY_URL=wss://<relay-domain>/host
+# RELAY_KEY=... npm start
 services:
   relay:
     build:
