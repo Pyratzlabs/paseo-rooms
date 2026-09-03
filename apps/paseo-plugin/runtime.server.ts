@@ -59,6 +59,7 @@ export async function ensureManagedRoomServer(): Promise<ManagedRoomServer> {
       .then(({ startLocalRoomServer }) => startLocalRoomServer())
       .catch((error) => {
         managed = null;
+        console.error("paseo-rooms local server failed to start", error);
         throw error;
       });
   }
