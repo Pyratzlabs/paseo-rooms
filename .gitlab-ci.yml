@@ -53,6 +53,7 @@ tests:
     - npm run test:relay-client
     - npm run test:e2ee
     - npm run test:secure-client
+    - npm run test:relay-origin
     - npm run test:e2ee-browser
     - npm run test:name
     - npm run test:scroll
@@ -124,6 +125,34 @@ deploy:
       ssh "$DEPLOY_SSH_TARGET" "printf '%s' '$RELAY_ENV_B64' | base64 -d > '$DEPLOY_DIR/apps/relay-web/deploy/.env' && chmod 600 '$DEPLOY_DIR/apps/relay-web/deploy/.env' && cd '$DEPLOY_DIR/apps/relay-web/deploy' && docker compose --env-file .env -f $COMPOSE_FILE up -d --build --remove-orphans && for attempt in \$(seq 1 15); do if curl -sS http://127.0.0.1:8080/ >/dev/null; then exit 0; fi; sleep 1; done; exit 1"
   rules:
     - if: $CI_COMMIT_BRANCH == "main" && $DEPLOY_SSH_TARGET && $DEPLOY_SSH_PRIVATE_KEY && $DEPLOY_SSH_KNOWN_HOSTS && $RELAY_KEY
+
+# A statically hosted v2 room client. The relay remains the WebSocket endpoint;
+# the explicit Vite value lets Pages use a different origin without weakening
+# room transport authentication. 404.html is the SPA fallback for opaque room
+# paths, which GitLab Pages cannot enumerate at build time.
+pages:
+  stage: deploy
+  image: node:22-alpine
+  tags:
+    - paseo-rooms
+  needs:
+    - job: quality
+      artifacts: false
+    - job: tests
+      artifacts: false
+    - job: plugin-verify
+      artifacts: false
+  script:
+    - npm ci --no-audit --no-fund
+    - VITE_PASEO_ROOMS_RELAY_ORIGIN=https://paseo-rooms.pyratzlabs.fr npm run build:web
+    - mkdir -p pages-public
+    - cp apps/relay-web/public/room.html pages-public/index.html
+    - cp apps/relay-web/public/room.html pages-public/404.html
+    - cp -R apps/relay-web/public/assets pages-public/assets
+  pages:
+    publish: pages-public
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
 
 include:
   - local: /.code-voucher/code-voucher-ci.yml

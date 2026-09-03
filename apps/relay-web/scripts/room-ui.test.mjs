@@ -50,6 +50,10 @@ const secureClient = await readFile(
   new URL("../web/src/secure-room-client.ts", import.meta.url),
   "utf8",
 );
+const relayOrigin = await readFile(
+  new URL("../web/src/relay-origin.ts", import.meta.url),
+  "utf8",
+);
 
 test("the public root is a responsive, accessible Paseo Rooms landing page", () => {
   assert.match(
@@ -117,6 +121,13 @@ test("secure invite material is retained through React render before hiding", ()
     secureClient,
     /export function secureInviteFromLocation[\s\S]*?return \{ routeId: token, inviteSecret, hostPublicKey \};/,
   );
+});
+
+test("the secure client can be served separately from the relay", () => {
+  assert.match(secureClient, /import \{ relayWebSocketUrl \}/);
+  assert.match(secureClient, /relayWebSocketUrl\(`\/v2\/rooms\//);
+  assert.match(relayOrigin, /VITE_PASEO_ROOMS_RELAY_ORIGIN/);
+  assert.match(relayOrigin, /relayWebSocketUrlFor/);
 });
 
 test("secure rooms tolerate Paseo lifecycle events the renderer does not display", () => {

@@ -24,6 +24,7 @@
     "test:relay-client": "npm run test:relay-client --workspace @paseo-rooms/relay-web",
     "test:e2ee": "npm run test:e2ee --workspace @paseo-rooms/relay-web",
     "test:secure-client": "npm run test:secure-client --workspace @paseo-rooms/relay-web",
+    "test:relay-origin": "npm run test:relay-origin --workspace @paseo-rooms/relay-web",
     "test:e2ee-browser": "npm run test:e2ee-browser --workspace @paseo-rooms/relay-web",
     "test:name": "npm run test:name --workspace @paseo-rooms/relay-web",
     "test:scroll": "npm run test:scroll --workspace @paseo-rooms/relay-web",

@@ -1,4 +1,5 @@
 import { createClientChannel } from "./paseo-e2ee.js";
+import { relayWebSocketUrl } from "./relay-origin.js";
 import type {
   RoomInfo,
   RoomParticipant,
@@ -254,9 +255,8 @@ export function parseSecureStreamEvent(payload: unknown): ParsedSecureEvent {
 }
 
 async function openSocket(routeId: string): Promise<WebSocket> {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   const ws = new WebSocket(
-    `${protocol}//${location.host}/v2/rooms/${encodeURIComponent(routeId)}/ws`,
+    relayWebSocketUrl(`/v2/rooms/${encodeURIComponent(routeId)}/ws`),
   );
   return new Promise((resolve, reject) => {
     ws.addEventListener("open", () => resolve(ws), { once: true });

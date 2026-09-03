@@ -52,3 +52,8 @@ Before sharing, configure
 laptop to register with the relay and is deliberately not bundled with the
 plugin. For a private relay, set `PASEO_ROOMS_PUBLIC_URL` and
 `PASEO_ROOMS_RELAY_URL` alongside that key.
+
+New public-room links use `https://paseo-rooms-9eb268.gitlab.io`, a GitLab Pages
+client that connects to the public relay. `PASEO_ROOMS_CLIENT_URL` overrides
+only the browser client origin placed in newly created links, for example for a
+separately hosted static client. The relay stays at `PASEO_ROOMS_PUBLIC_URL`.

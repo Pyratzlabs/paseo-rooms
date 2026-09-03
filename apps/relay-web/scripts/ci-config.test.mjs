@@ -18,7 +18,7 @@ const deployScript = await readFile(
 );
 
 test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
-  const jobs = ["quality", "tests", "plugin-verify", "deploy"];
+  const jobs = ["quality", "tests", "plugin-verify", "deploy", "pages"];
 
   for (const job of jobs) {
     assert.match(
@@ -88,6 +88,8 @@ test("quality and behavior checks are separate CI jobs", () => {
     "npm run test:relay",
     "npm run test:relay-client",
     "npm run test:e2ee",
+    "npm run test:secure-client",
+    "npm run test:relay-origin",
     "npm run test:e2ee-browser",
     "npm run test:name",
     "npm run test:scroll",
@@ -118,6 +120,28 @@ test("quality and behavior checks are separate CI jobs", () => {
   );
   assert.match(deployScript, /npm run build:docs/);
   assert.match(deployScript, /npm run build:web/);
+});
+
+test("GitLab Pages publishes a relay-configured room SPA after verification", () => {
+  assert.match(config, /^pages:[\s\S]*?^  stage: deploy$/m);
+  assert.match(
+    config,
+    /VITE_PASEO_ROOMS_RELAY_ORIGIN=https:\/\/paseo-rooms\.pyratzlabs\.fr npm run build:web/,
+  );
+  assert.match(
+    config,
+    /cp apps\/relay-web\/public\/room\.html pages-public\/index\.html/,
+  );
+  assert.match(
+    config,
+    /cp apps\/relay-web\/public\/room\.html pages-public\/404\.html/,
+  );
+  assert.match(config, /publish: pages-public/);
+  assert.match(
+    config,
+    /^pages:[\s\S]*?needs:[\s\S]*?job: quality\n      artifacts: false/m,
+  );
+  assert.match(config, /^pages:[\s\S]*?CI_COMMIT_BRANCH == "main"/m);
 });
 
 test("the local room server builds the documentation site before starting", () => {
