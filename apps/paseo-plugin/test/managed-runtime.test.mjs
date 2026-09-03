@@ -22,6 +22,7 @@ test("the repository root is an installable Paseo Rooms plugin", () => {
   assert.match(entry, /export default function paseoRooms/);
   assert.match(entry, /apps\/paseo-plugin\/main\.client/);
   assert.match(entry, /apps\/paseo-plugin\/share\.server/);
+  assert.doesNotMatch(entry, /@getpaseo\/plugin/);
   assert.equal(
     fs.existsSync(path.join(pluginRoot, "paseo-plugin.json")),
     false,
