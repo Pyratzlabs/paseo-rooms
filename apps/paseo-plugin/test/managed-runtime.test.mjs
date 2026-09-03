@@ -54,5 +54,5 @@ test("the plugin owns an in-process local room runtime", () => {
   assert.match(localServer, /export async function startLocalRoomServer/);
   assert.match(localServer, /closePaseoConnections/);
   assert.match(localServer, /PUBLIC_BASE_URL/);
-  assert.doesNotMatch(localServer, /fileURLToPath\(import\.meta\.url\)/);
+  assert.doesNotMatch(localServer, /\bimport\.meta\b/);
 });

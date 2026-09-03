@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   createRoom,
@@ -52,16 +51,22 @@ const PORT = Number(process.env.PORT ?? 3000);
 const LOCAL_BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ?? LOCAL_BASE_URL;
 const BASE_HOST = new URL(LOCAL_BASE_URL).host;
-// Paseo evaluates plugin server code in a function bundle, where
-// `import.meta.url` is intentionally unavailable. The plugin sets an explicit
-// directory before importing this module; standalone execution retains the
-// source-relative default.
-const moduleUrl = import.meta.url;
-const PUBLIC_DIR =
-  process.env.PASEO_ROOMS_PUBLIC_DIR ??
-  (moduleUrl
-    ? path.join(path.dirname(fileURLToPath(moduleUrl)), "..", "public")
-    : path.join(process.cwd(), "apps", "relay-web", "public"));
+// Paseo evaluates plugin server code in a function bundle, where module
+// metadata cannot be parsed. The plugin supplies an explicit directory before
+// importing this module. Standalone commands run either from this package or
+// the repository root, so retain both working-directory layouts as fallbacks.
+function resolvePublicDirectory(): string {
+  const configured = process.env.PASEO_ROOMS_PUBLIC_DIR;
+  if (configured) return configured;
+
+  const candidates = [
+    path.join(process.cwd(), "public"),
+    path.join(process.cwd(), "apps", "relay-web", "public"),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
+}
+
+const PUBLIC_DIR = resolvePublicDirectory();
 
 const ADMIN_TOKEN = getAdminToken();
 
