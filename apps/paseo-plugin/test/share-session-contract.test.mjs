@@ -19,10 +19,16 @@ test("the plugin exposes safe list and revoke share-session contracts", () => {
 
 test("the plugin filters listed rooms to the focused agent and revokes by token", () => {
   assert.match(server, /room\.agentId !== input\.agentId/);
-  assert.match(server, /room\.token === input\.token && room\.agentId === input\.agentId/);
+  assert.match(
+    server,
+    /room\.token === input\.token && room\.agentId === input\.agentId/,
+  );
   assert.match(server, /trusted local Paseo desktop host/);
   assert.match(server, /method: "DELETE"/);
-  assert.match(server, /\/api\/rooms\/\$\{encodeURIComponent\(input\.token\)\}/);
+  assert.match(
+    server,
+    /\/api\/rooms\/\$\{encodeURIComponent\(input\.token\)\}/,
+  );
   assert.doesNotMatch(server, /await res\.text\(\)/);
 });
 
@@ -33,4 +39,8 @@ test("the share panel renders persisted links and supports revocation", () => {
   assert.match(client, /Revoke link/);
   assert.match(client, /Confirm revoke/);
   assert.match(client, /Cancel/);
+  assert.match(client, /Open room with/);
+  assert.match(client, /Custom room client URL/);
+  assert.match(client, /rebaseRoomUrl/);
+  assert.match(client, /localStorage/);
 });
