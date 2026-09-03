@@ -24,6 +24,10 @@ import { Timeline } from "./components/Timeline";
 import { Composer } from "./components/Composer";
 import { NameGate } from "./components/NameGate";
 import { Participants } from "./components/Participants";
+import {
+  configuredRelayTarget,
+  requiresCustomRelayConfirmation,
+} from "./relay-origin";
 import { shouldFollowTimeline } from "./scroll";
 import {
   connectSecureRoom,
@@ -53,6 +57,13 @@ export default function App() {
   const secureSession = useRef<Awaited<
     ReturnType<typeof connectSecureRoom>
   > | null>(null);
+  const [customRelayConfirmed, setCustomRelayConfirmed] = useState(
+    () =>
+      !requiresCustomRelayConfirmation(
+        secureInvite.current?.relayOrigin,
+        configuredRelayTarget(),
+      ),
+  );
   const [room, setRoom] = useState<RoomInfo | null>(null);
   const [items, setItems] = useState<DisplayItem[]>([]);
   const [questions, setQuestions] = useState<RoomQuestion[]>([]);
@@ -152,6 +163,7 @@ export default function App() {
       setFatal(true);
       return;
     }
+    if (!customRelayConfirmed) return;
     let disposed = false;
     let socket: WebSocket | null = null;
     const connect = () => {
@@ -231,7 +243,7 @@ export default function App() {
       secureSession.current = null;
       if (timer.current) window.clearTimeout(timer.current);
     };
-  }, [applyLiveFrame, name, sync, token]);
+  }, [applyLiveFrame, customRelayConfirmed, name, sync, token]);
 
   async function send(message: string) {
     if (!name) return;
@@ -310,6 +322,21 @@ export default function App() {
       <main className="room-error">
         <h1>Invalid or expired share link</h1>
         <p>Ask the host for a new link.</p>
+      </main>
+    );
+  if (!customRelayConfirmed && secureInvite.current?.relayOrigin)
+    return (
+      <main className="room-error relay-confirmation">
+        <h1>Connect to a custom relay?</h1>
+        <p>
+          This link requests a relay other than the one configured for this
+          client.
+        </p>
+        <code>{secureInvite.current.relayOrigin}</code>
+        <p>Only continue if you trust the person who shared this link.</p>
+        <button type="button" onClick={() => setCustomRelayConfirmed(true)}>
+          Connect to this relay
+        </button>
       </main>
     );
   if (!name)

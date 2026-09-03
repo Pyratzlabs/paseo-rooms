@@ -4,6 +4,7 @@ import {
   inviteRelayOrigin,
   relayOriginFor,
   relayWebSocketUrlFor,
+  requiresCustomRelayConfirmation,
 } from "../web/src/relay-origin.js";
 
 test("the static client uses its configured relay instead of its page origin", () => {
@@ -48,4 +49,21 @@ test("an invite relay overrides the build-time relay only when safe", () => {
   );
   assert.equal(inviteRelayOrigin("ws://127.0.0.1:8787"), "ws://127.0.0.1:8787");
   assert.equal(inviteRelayOrigin("ws://private-relay.example"), null);
+});
+
+test("a custom invite relay requires explicit browser confirmation", () => {
+  assert.equal(
+    requiresCustomRelayConfirmation(
+      "wss://relay.example.test",
+      "https://relay.example.test",
+    ),
+    false,
+  );
+  assert.equal(
+    requiresCustomRelayConfirmation(
+      "wss://private-relay.example.test",
+      "https://relay.example.test",
+    ),
+    true,
+  );
 });

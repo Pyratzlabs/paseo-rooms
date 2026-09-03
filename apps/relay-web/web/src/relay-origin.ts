@@ -24,6 +24,20 @@ export function inviteRelayOrigin(value: string | null): string | null {
   return value ? normalizeRelayOrigin(value) : null;
 }
 
+/**
+ * An invite may select a custom relay, but a trusted static client must make
+ * that destination visible and require an explicit user opt-in first.
+ */
+export function requiresCustomRelayConfirmation(
+  inviteRelayOrigin: string | undefined,
+  configuredRelayOrigin: string,
+): boolean {
+  return (
+    inviteRelayOrigin !== undefined &&
+    inviteRelayOrigin !== normalizeRelayOrigin(configuredRelayOrigin)
+  );
+}
+
 export function relayWebSocketUrlFor(
   relayOrigin: string,
   path: string,
@@ -39,6 +53,12 @@ export function relayOrigin(): string {
     import.meta.env.VITE_PASEO_ROOMS_RELAY_ORIGIN,
     location.origin,
   );
+}
+
+export function configuredRelayTarget(): string {
+  const target = normalizeRelayOrigin(relayOrigin());
+  if (!target) throw new Error("Paseo Rooms relay target is invalid");
+  return target;
 }
 
 export function relayWebSocketUrl(path: string): string {

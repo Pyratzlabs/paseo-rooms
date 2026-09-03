@@ -135,6 +135,9 @@ test("the secure client can be served separately from the relay", () => {
   );
   assert.match(relayOrigin, /VITE_PASEO_ROOMS_RELAY_ORIGIN/);
   assert.match(relayOrigin, /relayWebSocketUrlFor/);
+  assert.match(relayOrigin, /requiresCustomRelayConfirmation/);
+  assert.match(app, /Connect to a custom relay/);
+  assert.match(app, /Connect to this relay/);
 });
 
 test("secure rooms tolerate Paseo lifecycle events the renderer does not display", () => {

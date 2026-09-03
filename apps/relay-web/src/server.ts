@@ -456,16 +456,22 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       // This is deliberately before createRoom(): a rejected credential
       // change must not leave an unregistered room in the local registry.
       assertRelayKeyCompatible(relayOrigin, relayKey);
-      const room =
-        isLegacyRequest
-          ? createLegacyRoom(agentId, label)
-          : createRoom(agentId, label, relayOrigin);
-      if (isSecureRoom(room)) {
-        relayClientFor(relayOrigin, relayKey).registerRoutes([
-          { token: room.token, protocol: 2 },
-        ]);
-      } else {
-        relayClientFor(relayOrigin, relayKey).register([room.token]);
+      const room = isLegacyRequest
+        ? createLegacyRoom(agentId, label)
+        : createRoom(agentId, label, relayOrigin);
+      try {
+        if (isSecureRoom(room)) {
+          relayClientFor(relayOrigin, relayKey).registerRoutes([
+            { token: room.token, protocol: 2 },
+          ]);
+        } else {
+          relayClientFor(relayOrigin, relayKey).register([room.token]);
+        }
+      } catch (error) {
+        // A client setup failure (including a changed registration key) must
+        // not leave a local link whose relay route was never registered.
+        deleteRoom(room.token);
+        throw error;
       }
       return json(201, {
         token: room.token,
@@ -751,9 +757,16 @@ function assertRelayKeyCompatible(relayOrigin: string, key: string): void {
   const error = relayKeyCompatibilityError(
     existing?.key,
     key,
-    relayRoutes(relayOrigin).length,
+    activeRelayRegistrationCount(relayOrigin),
   );
   if (error) throw new Error(error);
+}
+
+function activeRelayRegistrationCount(relayOrigin: string): number {
+  return (
+    relayRoutes(relayOrigin).length +
+    (relayOrigin === defaultRelayOrigin() ? relayTokens().length : 0)
+  );
 }
 
 export interface LocalRoomServer {
