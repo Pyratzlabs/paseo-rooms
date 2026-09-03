@@ -52,11 +52,16 @@ const PORT = Number(process.env.PORT ?? 3000);
 const LOCAL_BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ?? LOCAL_BASE_URL;
 const BASE_HOST = new URL(LOCAL_BASE_URL).host;
-const PUBLIC_DIR = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "public",
-);
+// Paseo evaluates plugin server code in a function bundle, where
+// `import.meta.url` is intentionally unavailable. The plugin sets an explicit
+// directory before importing this module; standalone execution retains the
+// source-relative default.
+const moduleUrl = import.meta.url;
+const PUBLIC_DIR =
+  process.env.PASEO_ROOMS_PUBLIC_DIR ??
+  (moduleUrl
+    ? path.join(path.dirname(fileURLToPath(moduleUrl)), "..", "public")
+    : path.join(process.cwd(), "apps", "relay-web", "public"));
 
 const ADMIN_TOKEN = getAdminToken();
 
@@ -700,9 +705,8 @@ export async function startLocalRoomServer(
   options: StartLocalRoomServerOptions = {},
 ): Promise<LocalRoomServer> {
   if (localServer) return localServer;
-  localServer = new Promise<LocalRoomServer>((resolve, reject) => {
+  const pending = new Promise<LocalRoomServer>((resolve, reject) => {
     const onError = (error: Error) => {
-      localServer = null;
       reject(error);
     };
     server.once("error", onError);
@@ -732,5 +736,13 @@ export async function startLocalRoomServer(
       });
     });
   });
-  return localServer;
+  localServer = pending;
+  try {
+    return await pending;
+  } catch (error) {
+    // A synchronous startup failure must not poison later attempts from the
+    // plugin panel.
+    if (localServer === pending) localServer = null;
+    throw error;
+  }
 }

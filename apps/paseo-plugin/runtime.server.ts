@@ -40,6 +40,16 @@ function configureLocalRuntime(): void {
   process.env.PUBLIC_BASE_URL = publicUrl.toString().replace(/\/$/, "");
   process.env.RELAY_URL = relayUrl;
   process.env.RELAY_KEY = relayKey;
+  // Paseo evaluates plugin server code rather than loading its ESM files
+  // directly, so import.meta.url cannot identify the plugin checkout. Plugin
+  // commands run from that checkout; pass the public assets explicitly before
+  // importing the shared room server.
+  process.env.PASEO_ROOMS_PUBLIC_DIR ??= path.join(
+    process.cwd(),
+    "apps",
+    "relay-web",
+    "public",
+  );
   process.env.DATA_DIR ??= path.join(
     process.env.PASEO_HOME ?? path.join(os.homedir(), ".paseo"),
     "paseo-rooms",
