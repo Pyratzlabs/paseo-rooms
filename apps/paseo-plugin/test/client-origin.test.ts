@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEFAULT_CLIENT_ORIGIN,
+  DEFAULT_RELAY_ORIGIN,
   normalizeClientOrigin,
+  normalizeRelayOrigin,
   rebaseRoomUrl,
 } from "../client-origin.js";
 
@@ -41,4 +43,20 @@ test("custom client origins are normalized and unsafe schemes are rejected", () 
 
 test("rebasing rejects public plaintext client origins", () => {
   assert.equal(rebaseRoomUrl(roomUrl, "http://client.example"), null);
+});
+
+test("relay origins use WSS publicly and keep WS for loopback testing", () => {
+  assert.equal(
+    normalizeRelayOrigin("https://relay.example"),
+    "wss://relay.example",
+  );
+  assert.equal(
+    normalizeRelayOrigin(DEFAULT_RELAY_ORIGIN),
+    DEFAULT_RELAY_ORIGIN,
+  );
+  assert.equal(
+    normalizeRelayOrigin("ws://127.0.0.1:8787"),
+    "ws://127.0.0.1:8787",
+  );
+  assert.equal(normalizeRelayOrigin("ws://relay.example"), null);
 });

@@ -97,13 +97,21 @@ v1 `data/rooms.json` entries.
 The invitation shape is:
 
 ```text
-https://paseo-rooms.pyratzlabs.fr/r/<route-id>#v=2&i=<invite-secret>&hp=<host-public-key>
+https://client.example/r/<route-id>#v=2&i=<invite-secret>&hp=<host-public-key>&relay=wss%3A%2F%2Frelay.example
 ```
 
 The fragment is never sent to the relay. The client parses it locally, keeps
 it only in memory, and immediately calls `history.replaceState` to remove it
 from visible browser history. The route ID is the only relay-visible room
 identifier.
+
+`relay` is optional additive v2.1 invite metadata. When present, it is the
+canonical `wss://` relay origin selected by the host when creating the room;
+clients connect to its fixed `/v2/rooms/<route-id>/ws` endpoint. Public relay
+origins must use TLS. `ws://` is permitted only for loopback development.
+Hosts authenticate their `/host` registration with a separate secret which is
+never included in the invitation. Links without `relay` retain the client's
+configured relay fallback for backwards compatibility.
 
 ## 5. Relay boundary
 

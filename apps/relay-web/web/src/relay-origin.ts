@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+import { normalizeRelayOrigin } from "../../src/relay-target.js";
+
 /**
  * The browser client can be served either by the relay itself or by a static
  * host such as GitLab Pages. Secure rooms always connect to the relay chosen
@@ -17,12 +19,18 @@ export function relayOriginFor(
   return origin.origin;
 }
 
+/** Validate an optional relay supplied by a v2 invite fragment. */
+export function inviteRelayOrigin(value: string | null): string | null {
+  return value ? normalizeRelayOrigin(value) : null;
+}
+
 export function relayWebSocketUrlFor(
   relayOrigin: string,
   path: string,
 ): string {
   const url = new URL(path, relayOrigin);
-  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  if (url.protocol === "https:") url.protocol = "wss:";
+  if (url.protocol === "http:") url.protocol = "ws:";
   return url.toString();
 }
 

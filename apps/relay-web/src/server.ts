@@ -42,6 +42,12 @@ import { publicStreamEvent } from "./public-events.js";
 import type { RoomQuestionResponse } from "./questions.js";
 import { MAX_V2_RECORD_BYTES } from "./relay/protocol.js";
 import {
+  legacyRoomUsesConfiguredRelay,
+  normalizeRelayOrigin,
+  relayHostUrl,
+  relayKeyCompatibilityError,
+} from "./relay-target.js";
+import {
   parsePresenceHello,
   RoomPresence,
   sanitizeParticipantName,
@@ -63,7 +69,9 @@ function resolvePublicDirectory(): string {
     path.join(process.cwd(), "public"),
     path.join(process.cwd(), "apps", "relay-web", "public"),
   ];
-  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
+  return (
+    candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0]
+  );
 }
 
 const PUBLIC_DIR = resolvePublicDirectory();
@@ -419,14 +427,44 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
         typeof body.label === "string"
           ? body.label
           : (info.title ?? "Shared session");
+      const requestedRelay =
+        typeof body.relayOrigin === "string" ? body.relayOrigin : undefined;
+      const relayOrigin = requestedRelay
+        ? normalizeRelayOrigin(requestedRelay)
+        : defaultRelayOrigin();
+      if (!relayOrigin)
+        return json(400, { error: "a valid relay origin is required" });
+      const configuredRelayOrigin = defaultRelayOrigin();
+      const relayKey =
+        typeof body.relayKey === "string" && body.relayKey.length > 0
+          ? body.relayKey
+          : relayOrigin === configuredRelayOrigin
+            ? process.env.RELAY_KEY
+            : undefined;
+      if (!relayKey)
+        return json(400, { error: "a host registration key is required" });
+      const isLegacyRequest = body.protocol === 1;
+      if (
+        isLegacyRequest &&
+        !legacyRoomUsesConfiguredRelay(relayOrigin, configuredRelayOrigin)
+      ) {
+        return json(400, {
+          error: "legacy rooms only support the configured relay",
+        });
+      }
+      // This is deliberately before createRoom(): a rejected credential
+      // change must not leave an unregistered room in the local registry.
+      assertRelayKeyCompatible(relayOrigin, relayKey);
       const room =
-        body.protocol === 1
+        isLegacyRequest
           ? createLegacyRoom(agentId, label)
-          : createRoom(agentId, label);
+          : createRoom(agentId, label, relayOrigin);
       if (isSecureRoom(room)) {
-        relayClient?.registerRoutes([{ token: room.token, protocol: 2 }]);
+        relayClientFor(relayOrigin, relayKey).registerRoutes([
+          { token: room.token, protocol: 2 },
+        ]);
       } else {
-        relayClient?.register([room.token]);
+        relayClientFor(relayOrigin, relayKey).register([room.token]);
       }
       return json(201, {
         token: room.token,
@@ -453,12 +491,21 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       parts.length === 3
     ) {
       if (!checkAdmin()) return json(401, { error: "unauthorized" });
-      const existed = deleteRoom(parts[2]);
-      if (!existed) return json(404, { error: "unknown room" });
+      const room = getRoom(parts[2]);
+      if (!room) return json(404, { error: "unknown room" });
+      deleteRoom(parts[2]);
       closeLiveRoom(parts[2]);
       closeSecureRoom(parts[2]);
-      relayClient?.unregister([parts[2]]);
-      relayClient?.unregisterRoutes([{ token: parts[2], protocol: 2 }]);
+      const relayOrigin = isSecureRoom(room)
+        ? room.relayOrigin
+        : defaultRelayOrigin();
+      const client = relayOrigin ? relayClients.get(relayOrigin) : undefined;
+      client?.client.unregister([parts[2]]);
+      client?.client.unregisterRoutes([{ token: parts[2], protocol: 2 }]);
+      if (relayOrigin && relayRoutes(relayOrigin).length === 0) {
+        client?.client.close();
+        relayClients.delete(relayOrigin);
+      }
       return json(200, { ok: true });
     }
 
@@ -644,7 +691,61 @@ server.on("upgrade", (req, socket, head) => {
 
 // ---- relay dial-out (opt-in) -----------------------------------------------
 
-let relayClient: RelayClient | null = null;
+interface ManagedRelayClient {
+  client: RelayClient;
+  key: string;
+}
+
+const relayClients = new Map<string, ManagedRelayClient>();
+
+function defaultRelayOrigin(): string | null {
+  const configured = process.env.RELAY_URL;
+  if (!configured) return null;
+  try {
+    const url = new URL(configured);
+    return normalizeRelayOrigin(url.origin);
+  } catch {
+    return null;
+  }
+}
+
+function relayClientFor(relayOrigin: string, key: string): RelayClient {
+  const existing = relayClients.get(relayOrigin);
+  if (existing) {
+    if (existing.key !== key) {
+      assertRelayKeyCompatible(relayOrigin, key);
+      existing.client.close();
+      relayClients.delete(relayOrigin);
+    } else {
+      return existing.client;
+    }
+  }
+  const client = startRelayClient({
+    url: relayHostUrl(relayOrigin),
+    key,
+    minBackoffMs: Number(process.env.RELAY_MIN_BACKOFF_MS ?? 1_000),
+    maxBackoffMs: Number(process.env.RELAY_MAX_BACKOFF_MS ?? 30_000),
+    // Product room creation is v2. Never leak global legacy route tokens to
+    // a separately selected relay; legacy compatibility stays on the default.
+    currentTokens: () =>
+      relayOrigin === defaultRelayOrigin() ? relayTokens() : [],
+    currentRoutes: () => relayRoutes(relayOrigin),
+    handleRequest: handleApiRequest,
+    openSocket: openAnyRoomSocket,
+  });
+  relayClients.set(relayOrigin, { client, key });
+  return client;
+}
+
+function assertRelayKeyCompatible(relayOrigin: string, key: string): void {
+  const existing = relayClients.get(relayOrigin);
+  const error = relayKeyCompatibilityError(
+    existing?.key,
+    key,
+    relayRoutes(relayOrigin).length,
+  );
+  if (error) throw new Error(error);
+}
 
 export interface LocalRoomServer {
   baseUrl: string;
@@ -660,32 +761,23 @@ export interface StartLocalRoomServerOptions {
 let localServer: Promise<LocalRoomServer> | null = null;
 
 function startRelayDialOut(): void {
-  const relayUrl = process.env.RELAY_URL;
+  const relayOrigin = defaultRelayOrigin();
   const relayKey = process.env.RELAY_KEY;
-  if (!relayUrl) return;
+  if (!relayOrigin) return;
   if (!relayKey) {
     console.error(
       "RELAY_URL is set but RELAY_KEY is missing — not dialling out to the relay",
     );
     return;
   }
-  relayClient = startRelayClient({
-    url: relayUrl,
-    key: relayKey,
-    minBackoffMs: Number(process.env.RELAY_MIN_BACKOFF_MS ?? 1_000),
-    maxBackoffMs: Number(process.env.RELAY_MAX_BACKOFF_MS ?? 30_000),
-    currentTokens: relayTokens,
-    currentRoutes: relayRoutes,
-    handleRequest: handleApiRequest,
-    openSocket: openAnyRoomSocket,
-  });
+  relayClientFor(relayOrigin, relayKey);
 }
 
 async function closeLocalRoomServer(): Promise<void> {
   if (!localServer) return;
   localServer = null;
-  relayClient?.close();
-  relayClient = null;
+  for (const { client } of relayClients.values()) client.close();
+  relayClients.clear();
   await closePaseoConnections();
   for (const socket of wss.clients) socket.close(1001, "room server stopped");
   for (const socket of v2Wss.clients) socket.close(1001, "room server stopped");

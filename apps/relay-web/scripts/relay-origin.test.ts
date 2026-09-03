@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  inviteRelayOrigin,
   relayOriginFor,
   relayWebSocketUrlFor,
 } from "../web/src/relay-origin.js";
@@ -38,4 +39,13 @@ test("the relay origin rejects non-HTTP configuration", () => {
     () => relayOriginFor("wss://relay.example", "https://client.example"),
     /must use http or https/,
   );
+});
+
+test("an invite relay overrides the build-time relay only when safe", () => {
+  assert.equal(
+    inviteRelayOrigin("wss://private-relay.example"),
+    "wss://private-relay.example",
+  );
+  assert.equal(inviteRelayOrigin("ws://127.0.0.1:8787"), "ws://127.0.0.1:8787");
+  assert.equal(inviteRelayOrigin("ws://private-relay.example"), null);
 });

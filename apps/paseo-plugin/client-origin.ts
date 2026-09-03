@@ -1,4 +1,7 @@
+import { normalizeRelayOrigin as normalizeRoomRelayOrigin } from "../relay-web/src/relay-target";
+
 export const DEFAULT_CLIENT_ORIGIN = "https://paseo-rooms-9eb268.gitlab.io";
+export const DEFAULT_RELAY_ORIGIN = "wss://paseo-rooms.pyratzlabs.fr";
 
 export const CLIENT_ORIGIN_PRESETS = [
   {
@@ -15,6 +18,8 @@ export const CLIENT_ORIGIN_PRESETS = [
 ] as const;
 
 export type ClientOriginChoice = (typeof CLIENT_ORIGIN_PRESETS)[number]["id"];
+
+export const normalizeRelayOrigin = normalizeRoomRelayOrigin;
 
 function isLoopbackHost(hostname: string): boolean {
   return (

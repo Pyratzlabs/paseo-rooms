@@ -18,6 +18,9 @@ export const shareSessionRpc = defineRpc({
   input: z.object({
     agentId: z.string().min(1),
     label: z.string().optional(),
+    relayOrigin: z.string().max(512).optional(),
+    /** Trusted local IPC only; never returned from this RPC. */
+    relayKey: z.string().min(1).max(4096).optional(),
   }),
   output: z.object({
     url: z.string(),

@@ -24,6 +24,8 @@ export interface SecureRoom {
   inviteSecret: string;
   hostPublicKey: string;
   hostKeyPair: KeyPair;
+  /** Canonical ws(s) origin selected when this room was created. */
+  relayOrigin: string;
   seenJoinAttemptIds: string[];
   seenClientRecordIds: string[];
 }
@@ -66,7 +68,11 @@ function persist(): void {
   );
 }
 
-export function createRoom(agentId: string, label: string): SecureRoom {
+export function createRoom(
+  agentId: string,
+  label: string,
+  relayOrigin = "wss://paseo-rooms.pyratzlabs.fr",
+): SecureRoom {
   const hostKeyPair = generateKeyPair();
   const room: SecureRoom = {
     token: crypto.randomBytes(32).toString("base64url"),
@@ -77,6 +83,7 @@ export function createRoom(agentId: string, label: string): SecureRoom {
     inviteSecret: crypto.randomBytes(32).toString("base64url"),
     hostPublicKey: exportPublicKey(hostKeyPair.publicKey),
     hostKeyPair,
+    relayOrigin,
     seenJoinAttemptIds: [],
     seenClientRecordIds: [],
   };
@@ -126,7 +133,7 @@ export function toPublicRoom(room: AnyRoom): PublicRoom {
 export function publicRoomUrl(room: AnyRoom, baseUrl: string): string {
   const url = `${baseUrl}/r/${room.token}`;
   if (!isSecureRoom(room)) return url;
-  return `${url}#v=2&i=${encodeURIComponent(room.inviteSecret)}&hp=${encodeURIComponent(room.hostPublicKey)}`;
+  return `${url}#v=2&i=${encodeURIComponent(room.inviteSecret)}&hp=${encodeURIComponent(room.hostPublicKey)}&relay=${encodeURIComponent(room.relayOrigin)}`;
 }
 
 export function listRooms(): AnyRoom[] {
@@ -137,11 +144,12 @@ export function relayTokens(): string[] {
   return [...rooms.keys()];
 }
 
-export function relayRoutes(): Array<{ token: string; protocol: 2 }> {
-  return [...secureRooms.keys()].map((token) => ({
-    token,
-    protocol: 2 as const,
-  }));
+export function relayRoutes(
+  relayOrigin?: string,
+): Array<{ token: string; protocol: 2 }> {
+  return [...secureRooms.values()]
+    .filter((room) => !relayOrigin || room.relayOrigin === relayOrigin)
+    .map((room) => ({ token: room.token, protocol: 2 as const }));
 }
 
 export function deleteRoom(token: string): boolean {
