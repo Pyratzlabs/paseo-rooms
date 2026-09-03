@@ -19,7 +19,12 @@ Host laptop room server
 Paseo daemon and agent
 ```
 
-The Paseo plugin runs on the host laptop. It starts the local room server when needed and asks it to create or revoke rooms. The local server alone holds the daemon connection, local admin token, agent identifier mapping, invite state, and room transport keys.
+The Paseo plugin runs on the host laptop. On the first **Share session** use it
+starts the local room server inside the plugin's daemon-side lifecycle and asks
+it to create or revoke rooms. A plugin reload, update, disable, or daemon
+shutdown closes that listener again. The local server alone holds the daemon
+connection, local admin token, agent identifier mapping, invite state, and room
+transport keys; no independent systemd service is involved.
 
 The public relay is a router, not a conversation database. It maps a public route ID to the host laptop's outbound connection and relays browser WebSocket records to it. It keeps routes in memory, so hosts re-register after a restart. The relay does not receive daemon credentials or agent IDs.
 

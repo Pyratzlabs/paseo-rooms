@@ -7,10 +7,13 @@ activates the plugin.
 
 ## Install
 
-Install a trusted release branch or tag from Git:
+Paseo 0.7.2 or later is required because the plugin manifest declares its
+monorepo build commands. The currently supported installation path is a trusted
+local checkout:
 
 ```sh
-paseo plugin add https://gitlab.com/pyratzlabs/software/paseo-rooms.git --ref <release-ref>
+paseo --version
+paseo plugin install /path/to/paseo-rooms
 paseo plugin status paseo-rooms
 ```
 
@@ -19,11 +22,9 @@ loopback listener on demand, keeps the admin token server-side, and closes the
 listener when Paseo reloads, updates, disables, or shuts down the plugin. No
 checkout path, detached child process, or `roomsPath` configuration is required.
 
-For contributor development from this monorepo:
-
-```sh
-paseo plugin install /path/to/paseo-rooms
-```
+After changing that checkout, apply it with `paseo plugin reload paseo-rooms`.
+Git-hosted release installation and package management are deliberately
+postponed until there is a stable release workflow.
 
 ## Runtime settings
 

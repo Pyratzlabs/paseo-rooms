@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { WebSocketServer, WebSocket } from "ws";
 import {
   createRoom,
@@ -52,11 +51,22 @@ const PORT = Number(process.env.PORT ?? 3000);
 const LOCAL_BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ?? LOCAL_BASE_URL;
 const BASE_HOST = new URL(LOCAL_BASE_URL).host;
-const PUBLIC_DIR = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "public",
-);
+// Paseo evaluates plugin server code in a function bundle, where module
+// metadata cannot be parsed. The plugin supplies an explicit directory before
+// importing this module. Standalone commands run either from this package or
+// the repository root, so retain both working-directory layouts as fallbacks.
+function resolvePublicDirectory(): string {
+  const configured = process.env.PASEO_ROOMS_PUBLIC_DIR;
+  if (configured) return configured;
+
+  const candidates = [
+    path.join(process.cwd(), "public"),
+    path.join(process.cwd(), "apps", "relay-web", "public"),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
+}
+
+const PUBLIC_DIR = resolvePublicDirectory();
 
 const ADMIN_TOKEN = getAdminToken();
 
@@ -700,9 +710,8 @@ export async function startLocalRoomServer(
   options: StartLocalRoomServerOptions = {},
 ): Promise<LocalRoomServer> {
   if (localServer) return localServer;
-  localServer = new Promise<LocalRoomServer>((resolve, reject) => {
+  const pending = new Promise<LocalRoomServer>((resolve, reject) => {
     const onError = (error: Error) => {
-      localServer = null;
       reject(error);
     };
     server.once("error", onError);
@@ -732,5 +741,13 @@ export async function startLocalRoomServer(
       });
     });
   });
-  return localServer;
+  localServer = pending;
+  try {
+    return await pending;
+  } catch (error) {
+    // A synchronous startup failure must not poison later attempts from the
+    // plugin panel.
+    if (localServer === pending) localServer = null;
+    throw error;
+  }
 }

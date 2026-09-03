@@ -93,17 +93,21 @@ For development, install the plugin from this checkout root:
 
 ```bash
 paseo plugin install "$PWD"
+paseo plugin reload paseo-rooms
 ```
 
-For a published release channel, install the same monorepo revision from Git:
+Paseo 0.7.2 or later is required: this plugin declares the build commands that
+prepare its monorepo dependencies. Check the command that will install the
+plugin—not merely an older shell alias—with:
 
 ```bash
-paseo plugin add https://gitlab.com/pyratzlabs/software/paseo-rooms.git --ref <release-ref>
-paseo plugin status paseo-rooms
+paseo --version
 ```
 
-Paseo prepares, validates, and compiles that revision before activation. The
-plugin then runs the matching local room runtime in its own process; no checkout
-path or `roomsPath` configuration is required. A tracked release branch can be
-updated with `paseo plugin update paseo-rooms`; pinned tags and commits remain
-reproducible installations.
+Paseo prepares, validates, and compiles the checkout before activation. The
+plugin then runs the matching local room runtime in its own process; no
+checkout-path setting, detached process, or systemd unit is required. The
+first visit to **Share session** starts the loopback listener; plugin reload,
+disable, update, and daemon shutdown stop it. A Git-hosted release channel and
+package-management flow are planned, but are not the supported installation
+path yet.
