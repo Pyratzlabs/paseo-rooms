@@ -16,10 +16,21 @@ export const CLIENT_ORIGIN_PRESETS = [
 
 export type ClientOriginChoice = (typeof CLIENT_ORIGIN_PRESETS)[number]["id"];
 
+function isLoopbackHost(hostname: string): boolean {
+  return (
+    hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]"
+  );
+}
+
 export function normalizeClientOrigin(value: string): string | null {
   try {
     const url = new URL(value.trim());
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (
+      url.protocol !== "https:" &&
+      !(url.protocol === "http:" && isLoopbackHost(url.hostname))
+    ) {
+      return null;
+    }
     return url.origin;
   } catch {
     return null;
@@ -34,8 +45,7 @@ export function rebaseRoomUrl(
   try {
     const room = new URL(roomUrl);
     const client = new URL(clientOrigin);
-    if (client.protocol !== "http:" && client.protocol !== "https:")
-      return null;
+    if (!normalizeClientOrigin(client.origin)) return null;
     return `${client.origin}${room.pathname}${room.search}${room.hash}`;
   } catch {
     return null;

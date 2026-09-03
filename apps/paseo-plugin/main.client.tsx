@@ -226,7 +226,7 @@ export function SharePanel({ theme, agentId }: PluginAgentPanelProps) {
             />
             {customOriginError ? (
               <Text style={styles.error}>
-                Enter a complete http or https client URL.
+                Enter an HTTPS URL, or an HTTP loopback URL for local testing.
               </Text>
             ) : null}
           </>

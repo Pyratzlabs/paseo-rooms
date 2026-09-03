@@ -29,6 +29,16 @@ test("custom client origins are normalized and unsafe schemes are rejected", () 
     normalizeClientOrigin("http://127.0.0.1:4173"),
     "http://127.0.0.1:4173",
   );
+  assert.equal(
+    normalizeClientOrigin("http://localhost:4173"),
+    "http://localhost:4173",
+  );
+  assert.equal(normalizeClientOrigin("http://[::1]:4173"), "http://[::1]:4173");
+  assert.equal(normalizeClientOrigin("http://client.example"), null);
   assert.equal(normalizeClientOrigin("javascript:alert(1)"), null);
   assert.equal(normalizeClientOrigin("not a url"), null);
+});
+
+test("rebasing rejects public plaintext client origins", () => {
+  assert.equal(rebaseRoomUrl(roomUrl, "http://client.example"), null);
 });
