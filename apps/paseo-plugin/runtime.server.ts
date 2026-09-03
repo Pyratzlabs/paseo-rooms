@@ -13,6 +13,9 @@ export interface ManagedRoomServer {
   started: boolean;
 }
 
+const DEFAULT_RELAY_PUBLIC_URL = "https://paseo-rooms.pyratzlabs.fr";
+const DEFAULT_CLIENT_URL = "https://paseo-rooms-9eb268.gitlab.io";
+
 let managed: Promise<StartedRoomServer> | null = null;
 
 function configureLocalRuntime(): void {
@@ -20,15 +23,24 @@ function configureLocalRuntime(): void {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error("paseo-rooms: PASEO_ROOMS_PORT must be a valid TCP port");
   }
-  const publicBaseUrl =
-    process.env.PASEO_ROOMS_PUBLIC_URL ??
-    process.env.PUBLIC_BASE_URL ??
-    "https://paseo-rooms.pyratzlabs.fr";
-  const publicUrl = new URL(publicBaseUrl);
+  // PASEO_ROOMS_PUBLIC_URL is retained as the public relay origin for
+  // compatibility. PASEO_ROOMS_CLIENT_URL controls the static client origin
+  // emitted in new links, allowing GitLab Pages to serve the UI separately.
+  const configuredRelayPublicBaseUrl =
+    process.env.PASEO_ROOMS_PUBLIC_URL ?? process.env.PUBLIC_BASE_URL;
+  const relayPublicBaseUrl =
+    configuredRelayPublicBaseUrl ?? DEFAULT_RELAY_PUBLIC_URL;
+  const relayPublicUrl = new URL(relayPublicBaseUrl);
+  const clientUrl = new URL(
+    process.env.PASEO_ROOMS_CLIENT_URL ??
+      // A custom relay normally owns its client too. The hosted default uses
+      // the independently deployable GitLab Pages client.
+      (configuredRelayPublicBaseUrl ? relayPublicBaseUrl : DEFAULT_CLIENT_URL),
+  );
   const relayUrl =
     process.env.PASEO_ROOMS_RELAY_URL ??
     process.env.RELAY_URL ??
-    `${publicUrl.protocol === "https:" ? "wss:" : "ws:"}//${publicUrl.host}/host`;
+    `${relayPublicUrl.protocol === "https:" ? "wss:" : "ws:"}//${relayPublicUrl.host}/host`;
   const relayKey = process.env.PASEO_ROOMS_RELAY_KEY ?? process.env.RELAY_KEY;
   if (!relayKey) {
     throw new Error(
@@ -37,7 +49,7 @@ function configureLocalRuntime(): void {
   }
   process.env.PORT = String(port);
   process.env.BASE_URL = `http://127.0.0.1:${port}`;
-  process.env.PUBLIC_BASE_URL = publicUrl.toString().replace(/\/$/, "");
+  process.env.PUBLIC_BASE_URL = clientUrl.toString().replace(/\/$/, "");
   process.env.RELAY_URL = relayUrl;
   process.env.RELAY_KEY = relayKey;
   // Paseo evaluates plugin server code rather than loading its ESM files

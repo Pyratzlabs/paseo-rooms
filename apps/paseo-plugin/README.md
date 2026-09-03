@@ -34,10 +34,13 @@ chooses the parent data directory; the room runtime stores its local state in
 
 Before sharing, set `PASEO_ROOMS_RELAY_KEY` in the environment of the Paseo
 daemon. That credential authorizes this laptop to register rooms with a relay;
-it is intentionally never stored in the plugin or Git repository. The default
-public origin is `https://paseo-rooms.pyratzlabs.fr`; use
-`PASEO_ROOMS_PUBLIC_URL` and `PASEO_ROOMS_RELAY_URL` together for a private
-relay. These are runtime credentials/settings, not installation paths.
+it is intentionally never stored in the plugin or Git repository. New default
+links use `https://paseo-rooms-9eb268.gitlab.io`, the independently deployed
+browser client, and connect to the relay at `https://paseo-rooms.pyratzlabs.fr`.
+For a private relay, set `PASEO_ROOMS_PUBLIC_URL` and
+`PASEO_ROOMS_RELAY_URL`; its own client remains the default. Set
+`PASEO_ROOMS_CLIENT_URL` to use any separately hosted client instead. These are
+runtime credentials/settings, not installation paths.
 
 ## Updates and debugging
 
