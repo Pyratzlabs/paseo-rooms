@@ -461,17 +461,21 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       if (relayOrigin && relayKey) {
         assertRelayKeyCompatible(relayOrigin, relayKey);
       }
+      const relayClient =
+        relayOrigin && relayKey ? relayClientFor(relayOrigin, relayKey) : null;
+      // Wait until the relay has accepted the host control connection before
+      // allocating an invite. In particular, an invalid custom relay key must
+      // fail this request rather than mint a route the relay will never serve.
+      await relayClient?.waitUntilConnected();
       const room = isLegacyRequest
         ? createLegacyRoom(agentId, label)
         : createRoom(agentId, label, relayOrigin ?? undefined);
       if (relayOrigin && relayKey) {
         try {
           if (isSecureRoom(room)) {
-            relayClientFor(relayOrigin, relayKey).registerRoutes([
-              { token: room.token, protocol: 2 },
-            ]);
+            relayClient!.registerRoutes([{ token: room.token, protocol: 2 }]);
           } else {
-            relayClientFor(relayOrigin, relayKey).register([room.token]);
+            relayClient!.register([room.token]);
           }
         } catch (error) {
           // A client setup failure (including a changed registration key) must

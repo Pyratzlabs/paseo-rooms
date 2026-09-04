@@ -148,6 +148,12 @@ export interface RelayClient {
   /** Claim protocol-aware routes (used by v2 once secure rooms exist). */
   registerRoutes(routes: RegisteredRoute[]): void;
   unregisterRoutes(routes: RegisteredRoute[]): void;
+  /**
+   * Resolve once the relay has accepted the control WebSocket. Room creation
+   * uses this before returning an invite, so a bad registration key cannot
+   * produce a link for a relay the host never reached.
+   */
+  waitUntilConnected(timeoutMs?: number): Promise<void>;
   connected(): boolean;
   close(): void;
 }
@@ -161,11 +167,32 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
   let stopped = false;
   let backoff = minBackoff;
   let retryTimer: NodeJS.Timeout | null = null;
+  const connectionWaiters = new Set<{
+    resolve(): void;
+    reject(error: Error): void;
+    timer: NodeJS.Timeout;
+  }>();
   /** Virtual browser sockets, keyed by the relay's per-socket id. */
   const sockets = new Map<string, VirtualSocket>();
 
   function send(frame: LaptopFrame): void {
     if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
+  }
+
+  function resolveConnectionWaiters(): void {
+    for (const waiter of connectionWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.resolve();
+    }
+    connectionWaiters.clear();
+  }
+
+  function rejectConnectionWaiters(error: Error): void {
+    for (const waiter of connectionWaiters) {
+      clearTimeout(waiter.timer);
+      waiter.reject(error);
+    }
+    connectionWaiters.clear();
   }
 
   /** A relay-forwarded browser socket, dressed up as a local room socket. */
@@ -236,6 +263,7 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
 
     socket.on("open", () => {
       backoff = minBackoff;
+      resolveConnectionWaiters();
       const routes = options.currentRoutes?.() ?? [];
       const routedTokens = new Set(routes.map((route) => route.token));
       const tokens = options
@@ -339,6 +367,9 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     const reconnect = (): void => {
       if (socket !== ws) return; // superseded
       ws = null;
+      rejectConnectionWaiters(
+        new Error("relay control connection closed before it was accepted"),
+      );
       dropAllSockets();
       if (stopped) return;
       const jitter = Math.random() * backoff * 0.5;
@@ -361,6 +392,9 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
       // cause: without it, an upstream or TLS failure is indistinguishable
       // from an intentional relay restart.
       log(`[relay-client] control socket error: ${error.message}`);
+      rejectConnectionWaiters(
+        new Error(`relay control connection failed: ${error.message}`),
+      );
     });
   }
 
@@ -381,10 +415,26 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
       if (routes.length > 0)
         send({ v: 1, type: "unregister", tokens: [], routes });
     },
+    waitUntilConnected: (timeoutMs = 5_000) => {
+      if (ws?.readyState === WebSocket.OPEN) return Promise.resolve();
+      return new Promise((resolve, reject) => {
+        const waiter = {
+          resolve,
+          reject,
+          timer: setTimeout(() => {
+            connectionWaiters.delete(waiter);
+            reject(new Error("timed out waiting for relay control connection"));
+          }, timeoutMs),
+        };
+        waiter.timer.unref?.();
+        connectionWaiters.add(waiter);
+      });
+    },
     connected: () => ws !== null && ws.readyState === WebSocket.OPEN,
     close: () => {
       stopped = true;
       if (retryTimer) clearTimeout(retryTimer);
+      rejectConnectionWaiters(new Error("relay client closed"));
       dropAllSockets();
       ws?.close();
       ws = null;
