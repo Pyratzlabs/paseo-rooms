@@ -42,16 +42,14 @@ function configureLocalRuntime(): void {
     process.env.RELAY_URL ??
     `${relayPublicUrl.protocol === "https:" ? "wss:" : "ws:"}//${relayPublicUrl.host}/host`;
   const relayKey = process.env.PASEO_ROOMS_RELAY_KEY ?? process.env.RELAY_KEY;
-  if (!relayKey) {
-    throw new Error(
-      "paseo-rooms: PASEO_ROOMS_RELAY_KEY is required before sharing a room",
-    );
-  }
   process.env.PORT = String(port);
   process.env.BASE_URL = `http://127.0.0.1:${port}`;
   process.env.PUBLIC_BASE_URL = clientUrl.toString().replace(/\/$/, "");
   process.env.RELAY_URL = relayUrl;
-  process.env.RELAY_KEY = relayKey;
+  // A widget-selected relay supplies its registration key with the room
+  // creation request. Do not prevent that flow by requiring a default relay
+  // credential merely to start the local listener.
+  if (relayKey) process.env.RELAY_KEY = relayKey;
   // Paseo evaluates plugin server code rather than loading its ESM files
   // directly, so import.meta.url cannot identify the plugin checkout. Plugin
   // commands run from that checkout; pass the public assets explicitly before

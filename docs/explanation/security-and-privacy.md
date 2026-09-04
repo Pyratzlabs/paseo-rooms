@@ -14,7 +14,7 @@ The relay sees route IDs, connection metadata, timing, and ciphertext sizes. It 
 
 ## Current limitation
 
-At this stage, the public relay also serves the room HTML and JavaScript. A malicious relay operator could alter that client before its encryption starts. Therefore, describe the current system as **encrypted payload transport**, not as protection from a malicious relay operator. Serving a verifiable client from a separately administered static origin is explicitly postponed work.
+The same-origin relay client is controlled by its relay operator, who could alter that client before encryption starts. Therefore, describe that deployment as **encrypted payload transport**, not as protection from a malicious relay operator. Selecting the GitLab Pages client or a separately administered custom client separates the client delivery origin from the relay, but users must still decide that client origin is trustworthy. A verifiable, version-pinned client delivery mechanism is explicitly postponed work.
 
 ## What encryption does not change
 
