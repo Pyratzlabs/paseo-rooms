@@ -5,6 +5,7 @@ import {
   shareSessionRpc,
 } from "./share.shared";
 import { ensureManagedRoomServer } from "./runtime.server";
+import { normalizeRelayOrigin } from "../relay-web/src/relay-target";
 
 // Plugin RPCs run only inside the trusted local Paseo desktop host. The
 // framework does not provide a caller identity to handlers, so `agentId` is a
@@ -23,6 +24,14 @@ function failure(operation: string, res: Response): never {
 export async function shareSession(
   input: ZodOutput<typeof shareSessionRpc.input>,
 ): Promise<{ url: string; token: string; startedServer: boolean }> {
+  const relayOrigin = input.relayOrigin
+    ? normalizeRelayOrigin(input.relayOrigin)
+    : undefined;
+  if (input.relayOrigin && !relayOrigin) {
+    throw new Error(
+      "paseo-rooms: relay must use WSS, or WS only on a loopback address",
+    );
+  }
   const server = await ensureManagedRoomServer();
   const res = await fetch(`${server.baseUrl}/api/rooms`, {
     method: "POST",
@@ -30,11 +39,12 @@ export async function shareSession(
       "content-type": "application/json",
       ...authorization(server),
     },
-    body: JSON.stringify(
-      input.label
-        ? { agentId: input.agentId, label: input.label }
-        : { agentId: input.agentId },
-    ),
+    body: JSON.stringify({
+      agentId: input.agentId,
+      ...(input.label ? { label: input.label } : {}),
+      ...(relayOrigin ? { relayOrigin } : {}),
+      ...(input.relayKey ? { relayKey: input.relayKey } : {}),
+    }),
   });
 
   if (!res.ok) failure("room creation", res);

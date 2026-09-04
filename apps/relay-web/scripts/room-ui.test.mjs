@@ -119,15 +119,25 @@ test("secure invite material is retained through React render before hiding", ()
   assert.match(secureClient, /export function hideSecureInviteFromLocation/);
   assert.match(
     secureClient,
-    /export function secureInviteFromLocation[\s\S]*?return \{ routeId: token, inviteSecret, hostPublicKey \};/,
+    /export function secureInviteFromLocation[\s\S]*?relayOrigin: relayOrigin \?\? undefined/,
   );
 });
 
 test("the secure client can be served separately from the relay", () => {
-  assert.match(secureClient, /import \{ relayWebSocketUrl \}/);
+  assert.match(
+    secureClient,
+    /import \{ inviteRelayOrigin, relayWebSocketUrl \}/,
+  );
   assert.match(secureClient, /relayWebSocketUrl\(`\/v2\/rooms\//);
+  assert.match(
+    secureClient,
+    /relayOrigin\s*\?\s*`\$\{relayOrigin\}\/v2\/rooms/,
+  );
   assert.match(relayOrigin, /VITE_PASEO_ROOMS_RELAY_ORIGIN/);
   assert.match(relayOrigin, /relayWebSocketUrlFor/);
+  assert.match(relayOrigin, /requiresCustomRelayConfirmation/);
+  assert.match(app, /Connect to a custom relay/);
+  assert.match(app, /Connect to this relay/);
 });
 
 test("secure rooms tolerate Paseo lifecycle events the renderer does not display", () => {

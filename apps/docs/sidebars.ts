@@ -14,6 +14,7 @@ const sidebars: SidebarsConfig = {
       items: [
         "how-to/install-the-plugin",
         "how-to/manage-share-links",
+        "how-to/choose-a-client-and-relay",
         "how-to/run-your-own-relay",
       ],
     },

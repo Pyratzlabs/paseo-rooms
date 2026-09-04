@@ -43,4 +43,8 @@ test("the share panel renders persisted links and supports revocation", () => {
   assert.match(client, /Custom room client URL/);
   assert.match(client, /rebaseRoomUrl/);
   assert.match(client, /localStorage/);
+  assert.match(client, /Relay for new links/);
+  assert.match(client, /Custom relay host registration key/);
+  assert.match(client, /This affects new links only/);
+  assert.match(client, /local server can use its configured/);
 });

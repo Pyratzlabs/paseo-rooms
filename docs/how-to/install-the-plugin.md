@@ -47,13 +47,17 @@ its local token under the Paseo data directory. It starts on the first Share
 session use and is stopped when the plugin reloads, is disabled or updated, or
 when the Paseo daemon shuts down—there is no separate service to install.
 
-Before sharing, configure
-`PASEO_ROOMS_RELAY_KEY` in the Paseo daemon's environment. This authorizes the
-laptop to register with the relay and is deliberately not bundled with the
-plugin. For a private relay, set `PASEO_ROOMS_PUBLIC_URL` and
-`PASEO_ROOMS_RELAY_URL` alongside that key.
+Configure `PASEO_ROOMS_RELAY_KEY` in the Paseo daemon's environment to use a
+default relay. This authorizes the laptop to register with that relay and is
+deliberately not bundled with the plugin. Alternatively, select a custom relay
+and enter its registration key directly in the Share session panel; the local
+room listener can start without a default relay key. For an always-custom
+default, set `PASEO_ROOMS_PUBLIC_URL` and `PASEO_ROOMS_RELAY_URL` alongside
+that key.
 
 New public-room links use `https://paseo-rooms-9eb268.gitlab.io`, a GitLab Pages
 client that connects to the public relay. `PASEO_ROOMS_CLIENT_URL` overrides
 only the browser client origin placed in newly created links, for example for a
 separately hosted static client. The relay stays at `PASEO_ROOMS_PUBLIC_URL`.
+The Share session panel can also choose client and relay destinations per new
+link; see [Choose a room client and relay](choose-a-client-and-relay).

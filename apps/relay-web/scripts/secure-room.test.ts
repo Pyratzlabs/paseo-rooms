@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createClientChannel, type Transport } from "../src/paseo-e2ee.js";
-import { createRoom, deleteRoom } from "../src/rooms.js";
+import { createRoom, deleteRoom, publicRoomUrl } from "../src/rooms.js";
 import { closeSecureRoom, openSecureRoomSocket } from "../src/secure-room.js";
 import type { RoomSocket } from "../src/relay-client.js";
 
@@ -145,6 +145,17 @@ function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
     }, 10);
   });
 }
+
+test("a local-only v2 room does not put a relay target in its invite", () => {
+  const room = createRoom("agent", "Local-only room");
+  try {
+    const invite = publicRoomUrl(room, "http://127.0.0.1:3000");
+    assert.match(invite, /#v=2&i=/);
+    assert.doesNotMatch(invite, /[?&]relay=/);
+  } finally {
+    deleteRoom(room.token);
+  }
+});
 
 function fakeDependencies(): {
   deps: SecureRoomDeps;

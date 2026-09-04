@@ -6,7 +6,9 @@ import { z } from "zod";
 import {
   CLIENT_ORIGIN_PRESETS,
   DEFAULT_CLIENT_ORIGIN,
+  DEFAULT_RELAY_ORIGIN,
   normalizeClientOrigin,
+  normalizeRelayOrigin,
   rebaseRoomUrl,
   type ClientOriginChoice,
 } from "./client-origin";
@@ -17,6 +19,7 @@ import {
 } from "./share.shared";
 
 const CLIENT_ORIGIN_PREFERENCE_KEY = "paseo-rooms.client-origin";
+const RELAY_PREFERENCE_KEY = "paseo-rooms.relay-origin";
 
 function loadClientOriginPreference(): {
   choice: ClientOriginChoice;
@@ -84,6 +87,14 @@ export function SharePanel({ theme, agentId }: PluginAgentPanelProps) {
   const [{ choice: clientChoice, customOrigin }, setClientOriginPreference] =
     useState(loadClientOriginPreference);
   const [isClientMenuOpen, setClientMenuOpen] = useState(false);
+  const [relayOrigin, setRelayOrigin] = useState(() => {
+    try {
+      return localStorage.getItem(RELAY_PREFERENCE_KEY) ?? DEFAULT_RELAY_ORIGIN;
+    } catch {
+      return DEFAULT_RELAY_ORIGIN;
+    }
+  });
+  const [relayKey, setRelayKey] = useState("");
   const error =
     sharesQuery.error ?? shareMutation.error ?? revokeMutation.error;
 
@@ -99,6 +110,8 @@ export function SharePanel({ theme, agentId }: PluginAgentPanelProps) {
         : DEFAULT_CLIENT_ORIGIN;
   const customOriginError =
     clientChoice === "custom" && customOrigin.trim() && !normalizedCustomOrigin;
+  const normalizedRelayOrigin = normalizeRelayOrigin(relayOrigin);
+  const relayOriginError = relayOrigin.trim() && !normalizedRelayOrigin;
 
   const updateClientOriginPreference = useCallback(
     (next: { choice: ClientOriginChoice; customOrigin: string }) => {
@@ -159,8 +172,18 @@ export function SharePanel({ theme, agentId }: PluginAgentPanelProps) {
   );
 
   const handleShare = useCallback(() => {
-    shareMutation.mutate({ agentId, label: agent?.title ?? undefined });
-  }, [shareMutation, agentId, agent?.title]);
+    if (!normalizedRelayOrigin) return;
+    shareMutation.mutate({
+      agentId,
+      label: agent?.title ?? undefined,
+      // Omit the hosted preset so the local server can use its configured
+      // default relay. This keeps self-hosted deployments configurable without
+      // making the plugin know their server-side relay endpoint or key.
+      ...(normalizedRelayOrigin === DEFAULT_RELAY_ORIGIN
+        ? {}
+        : { relayOrigin: normalizedRelayOrigin, relayKey }),
+    });
+  }, [shareMutation, agentId, agent?.title, normalizedRelayOrigin, relayKey]);
 
   return (
     <View style={styles.screen}>
@@ -232,9 +255,58 @@ export function SharePanel({ theme, agentId }: PluginAgentPanelProps) {
           </>
         ) : null}
       </View>
+      <View style={styles.picker}>
+        <Text style={styles.detail}>Relay for new links</Text>
+        <TextInput
+          accessibilityLabel="Relay endpoint for new rooms"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+          onChangeText={(value) => {
+            setRelayOrigin(value);
+            try {
+              localStorage.setItem(RELAY_PREFERENCE_KEY, value);
+            } catch {
+              // Preference persistence is optional.
+            }
+          }}
+          placeholder="wss://relay.example.com"
+          placeholderTextColor={colors.foregroundMuted}
+          style={styles.input}
+          value={relayOrigin}
+        />
+        {normalizedRelayOrigin !== DEFAULT_RELAY_ORIGIN ? (
+          <TextInput
+            accessibilityLabel="Custom relay host registration key"
+            autoCapitalize="none"
+            autoCorrect={false}
+            onChangeText={setRelayKey}
+            placeholder="Host registration key"
+            placeholderTextColor={colors.foregroundMuted}
+            secureTextEntry
+            style={styles.input}
+            value={relayKey}
+          />
+        ) : null}
+        {relayOriginError ? (
+          <Text style={styles.error}>
+            Enter a WSS URL, or a WS loopback URL for local testing.
+          </Text>
+        ) : null}
+        {normalizedRelayOrigin !== DEFAULT_RELAY_ORIGIN && !relayKey ? (
+          <Text style={styles.error}>
+            A host registration key is required for a custom relay.
+          </Text>
+        ) : null}
+        <Text style={styles.detail}>This affects new links only.</Text>
+      </View>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Create a share link for this agent"
+        disabled={
+          !normalizedRelayOrigin ||
+          (normalizedRelayOrigin !== DEFAULT_RELAY_ORIGIN && !relayKey)
+        }
         onPress={handleShare}
         style={styles.button}
       >

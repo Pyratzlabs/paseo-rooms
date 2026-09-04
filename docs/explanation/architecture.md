@@ -30,15 +30,17 @@ The public relay is a router, not a conversation database. It maps a public rout
 
 ## Browser client delivery
 
-New public-room links use the v2 client published on GitLab Pages. Its build
-records the public relay origin and connects there over WebSocket; it does not
-need a relay-side HTTP API for secure rooms. The relay continues serving its
-same-origin client for existing links and self-hosted deployments.
+The browser client and the relay are independent choices. New public-room
+links default to the v2 client on GitLab Pages and the Pyratz Labs relay. The
+Share session panel can instead select the Pyratz Labs same-origin client, a
+custom client origin, a custom relay origin, or both. A selected relay is
+carried in the encrypted-room invite fragment, so compatible clients connect
+to that route rather than assuming their own deployment's relay.
 
-Hosts may set `PASEO_ROOMS_CLIENT_URL` to put the static-client origin in new
-links while retaining `PASEO_ROOMS_PUBLIC_URL` as the relay origin. This split
-lets an organisation host and audit the client independently, or keep the
-default paired deployment. The Pages site supplies an SPA fallback so opaque
-`/r/<route-id>` links still load the client.
+This split lets an organisation run its own relay while retaining a published
+client, or independently host and audit its client while retaining the shared
+relay. The static client must provide an SPA fallback so opaque
+`/r/<route-id>` links load the application. A client confirms a custom relay
+endpoint before it opens the encrypted channel.
 
 The agent timeline remains in Paseo. The local server reads its history and live updates, then fans authorised room events out to connected collaborators. Messages and structured decisions move in the other direction through a small host-side allowlist; browsers cannot select arbitrary agents or invoke arbitrary daemon operations.

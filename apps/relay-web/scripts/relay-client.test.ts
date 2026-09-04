@@ -134,6 +134,38 @@ test("relay client re-registers an explicit v2 route and accepts bounded opaque 
   }
 });
 
+test("relay client rejects a readiness wait when the registration key is invalid", async () => {
+  const relay = await createRelay({
+    port: 0,
+    relayKey: "correct-key",
+    log: () => {},
+  });
+  const client = startRelayClient({
+    url: `ws://127.0.0.1:${relay.port}/host`,
+    key: "wrong-key",
+    currentTokens: () => [],
+    handleRequest: async () => ({
+      status: 404,
+      headers: {},
+      body: Buffer.alloc(0),
+    }),
+    openSocket: async () => false,
+    minBackoffMs: 10,
+    maxBackoffMs: 20,
+    log: () => {},
+  });
+
+  try {
+    await assert.rejects(
+      client.waitUntilConnected(500),
+      /relay control connection (failed|closed)/,
+    );
+  } finally {
+    client.close();
+    await relay.close();
+  }
+});
+
 test("relay client fails closed when a relay injects an invalid v2 record", async () => {
   const routeId = "D".repeat(43);
   const relay = new WebSocketServer({ port: 0, perMessageDeflate: false });

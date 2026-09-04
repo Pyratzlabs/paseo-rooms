@@ -1,5 +1,5 @@
 import { createClientChannel } from "./paseo-e2ee.js";
-import { relayWebSocketUrl } from "./relay-origin.js";
+import { inviteRelayOrigin, relayWebSocketUrl } from "./relay-origin.js";
 import type {
   RoomInfo,
   RoomParticipant,
@@ -16,6 +16,7 @@ export interface SecureInvite {
   routeId: string;
   inviteSecret: string;
   hostPublicKey: string;
+  relayOrigin?: string;
 }
 
 export interface SecureWelcome {
@@ -61,7 +62,15 @@ export function secureInviteFromLocation(
   const inviteSecret = params.get("i");
   const hostPublicKey = params.get("hp");
   if (!inviteSecret || !hostPublicKey) return null;
-  return { routeId: token, inviteSecret, hostPublicKey };
+  const explicitRelay = params.get("relay");
+  const relayOrigin = inviteRelayOrigin(explicitRelay);
+  if (explicitRelay && !relayOrigin) return null;
+  return {
+    routeId: token,
+    inviteSecret,
+    hostPublicKey,
+    relayOrigin: relayOrigin ?? undefined,
+  };
 }
 
 /** Remove invite material only after React has retained the parsed invite. */
@@ -254,9 +263,14 @@ export function parseSecureStreamEvent(payload: unknown): ParsedSecureEvent {
   return null;
 }
 
-async function openSocket(routeId: string): Promise<WebSocket> {
+async function openSocket(
+  routeId: string,
+  relayOrigin?: string,
+): Promise<WebSocket> {
   const ws = new WebSocket(
-    relayWebSocketUrl(`/v2/rooms/${encodeURIComponent(routeId)}/ws`),
+    relayOrigin
+      ? `${relayOrigin}/v2/rooms/${encodeURIComponent(routeId)}/ws`
+      : relayWebSocketUrl(`/v2/rooms/${encodeURIComponent(routeId)}/ws`),
   );
   return new Promise((resolve, reject) => {
     ws.addEventListener("open", () => resolve(ws), { once: true });
@@ -273,7 +287,7 @@ export async function connectSecureRoom(
   displayName: string,
   handlers: Handlers,
 ): Promise<SecureRoomSession> {
-  const ws = await openSocket(invite.routeId);
+  const ws = await openSocket(invite.routeId, invite.relayOrigin);
   let sessionId: string | null = null;
   let expectedHostSeq = 1;
   let clientSeq = 0;

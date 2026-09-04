@@ -90,6 +90,7 @@ test("quality and behavior checks are separate CI jobs", () => {
     "npm run test:e2ee",
     "npm run test:secure-client",
     "npm run test:relay-origin",
+    "npm run test:relay-target",
     "npm run test:e2ee-browser",
     "npm run test:name",
     "npm run test:scroll",
