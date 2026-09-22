@@ -10,6 +10,7 @@
  * the relay only ever sees room tokens and opaque response bytes.
  */
 
+import { setTimeout as nodeSetTimeout, clearTimeout } from "node:timers";
 import { WebSocket } from "ws";
 import {
   matchPublicRoute,
@@ -22,6 +23,13 @@ import {
   type RelayFrame,
   type RoomProtocolVersion,
 } from "./relay/protocol.js";
+
+// React Native adds browser timer overloads when this server is typechecked
+// through the plugin workspace. This import always uses Node's timer runtime.
+const setTimeout = nodeSetTimeout as (
+  callback: () => void,
+  delay: number,
+) => NodeJS.Timeout;
 
 /**
  * Parse a frame received from the relay. Mirror image of the relay's

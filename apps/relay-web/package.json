@@ -36,7 +36,7 @@
     "test:lock": "node --test scripts/package-lock.test.mjs"
   },
   "dependencies": {
-    "@getpaseo/client": "^0.7.2",
+    "@getpaseo/client": "^0.8.0",
     "@getpaseo/relay": "0.6.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

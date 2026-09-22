@@ -165,6 +165,11 @@ async function joinRoom(room: Room, socket: RoomSocket): Promise<void> {
     live.unsubscribe = await subscribeAgent(
       room.agentId,
       ({ event, timestamp }) => {
+        if (event.type === "replacement") {
+          // Rejoining fetches a fresh snapshot after Paseo invalidates history.
+          for (const ws of live!.sockets) ws.close(1012, "timeline replaced");
+          return;
+        }
         const frame = JSON.stringify({
           type: "stream",
           event: publicStreamEvent(event),

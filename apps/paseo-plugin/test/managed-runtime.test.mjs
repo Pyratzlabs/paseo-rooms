@@ -12,17 +12,24 @@ test("the repository root is an installable Paseo Rooms plugin", () => {
   const manifest = JSON.parse(
     fs.readFileSync(path.join(repositoryRoot, "paseo-plugin.json"), "utf8"),
   );
-  const entry = fs.readFileSync(path.join(repositoryRoot, "index.ts"), "utf8");
+  const clientEntry = fs.readFileSync(
+    path.join(repositoryRoot, "index.client.tsx"),
+    "utf8",
+  );
+  const serverEntry = fs.readFileSync(
+    path.join(repositoryRoot, "index.server.ts"),
+    "utf8",
+  );
 
   assert.equal(manifest.id, "paseo-rooms");
   assert.deepEqual(manifest.build, [
     ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
     ["npm", "run", "verify:plugin-distribution"],
   ]);
-  assert.match(entry, /export default function paseoRooms/);
-  assert.match(entry, /apps\/paseo-plugin\/main\.client/);
-  assert.match(entry, /apps\/paseo-plugin\/share\.server/);
-  assert.doesNotMatch(entry, /@getpaseo\/plugin/);
+  assert.equal(manifest.requirements.paseo, ">=0.8.0 <0.9.0");
+  assert.match(clientEntry, /\.\/client\/plugin.js/);
+  assert.match(serverEntry, /\.\/server\/plugin.js/);
+  assert.equal(fs.existsSync(path.join(repositoryRoot, "index.ts")), false);
   assert.equal(
     fs.existsSync(path.join(pluginRoot, "paseo-plugin.json")),
     false,

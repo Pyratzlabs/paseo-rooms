@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { readSavedRelayKey } from "./relay-credentials.server";
 
 interface StartedRoomServer {
   baseUrl: string;
@@ -41,7 +42,10 @@ function configureLocalRuntime(): void {
     process.env.PASEO_ROOMS_RELAY_URL ??
     process.env.RELAY_URL ??
     `${relayPublicUrl.protocol === "https:" ? "wss:" : "ws:"}//${relayPublicUrl.host}/host`;
-  const relayKey = process.env.PASEO_ROOMS_RELAY_KEY ?? process.env.RELAY_KEY;
+  const relayKey =
+    process.env.PASEO_ROOMS_RELAY_KEY ??
+    process.env.RELAY_KEY ??
+    readSavedRelayKey(relayUrl);
   process.env.PORT = String(port);
   process.env.BASE_URL = `http://127.0.0.1:${port}`;
   process.env.PUBLIC_BASE_URL = clientUrl.toString().replace(/\/$/, "");

@@ -7,8 +7,7 @@ activates the plugin.
 
 ## Install
 
-Paseo 0.7.2 or later is required because the plugin manifest declares its
-monorepo build commands. The currently supported installation path is a trusted
+Paseo 0.8.x is required because the plugin uses separate client/server entries. The currently supported installation path is a trusted
 local checkout:
 
 ```sh
@@ -45,6 +44,13 @@ For a private relay, set `PASEO_ROOMS_PUBLIC_URL` and
 `PASEO_ROOMS_CLIENT_URL` to use any separately hosted client instead. These are
 runtime credentials/settings, not installation paths.
 
+Existing installations can keep their key in `~/.config/paseo-rooms.env`
+(`$XDG_CONFIG_HOME/paseo-rooms.env` when set). If no relay key is supplied in
+the daemon environment, the plugin reads `RELAY_KEY` from that file only when
+its `RELAY_URL` matches the configured host endpoint exactly. Other settings
+in the file are not imported, and the key never goes to the browser. The file
+is parsed as dotenv data, not executed as a shell script.
+
 ## Updates and debugging
 
 ```sh
@@ -55,3 +61,13 @@ paseo plugin logs paseo-rooms
 Git plugin code and its manifest preparation commands are trusted, unsandboxed
 code on the daemon host. Install only revisions you trust. A plugin update
 restarts the in-memory room runtime, so existing share links are invalidated.
+
+## Development build
+
+`npm run build:plugin` at the repository root bundles this workspace's
+`index.client.tsx` and `index.server.ts` into ignored `client/plugin.js` and
+`server/plugin.js` artifacts. The root runtime entries load those artifacts.
+This preserves the monorepo layout while satisfying Paseo 0.8's directory
+boundaries; the browser bundle never contains the local room server.
+The manifest runs this build before verification on installation and reload.
+Edit the workspace sources, not the generated bundles.

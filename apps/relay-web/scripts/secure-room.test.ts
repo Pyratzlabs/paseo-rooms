@@ -160,13 +160,21 @@ test("a local-only v2 room does not put a relay target in its invite", () => {
 function fakeDependencies(): {
   deps: SecureRoomDeps;
   sentMessages: string[];
-  publish(event: { type: "turn_started"; provider: string }): void;
+  publish(
+    event:
+      | { type: "turn_started"; provider: string }
+      | { type: "replacement"; epoch: string },
+  ): void;
 } {
   let subscriber: Parameters<SecureRoomDeps["subscribeAgent"]>[1] | null = null;
   const sentMessages: string[] = [];
   return {
     sentMessages,
     publish(event) {
+      if (event.type === "replacement") {
+        subscriber?.({ agentId: "agent", event });
+        return;
+      }
       subscriber?.({
         agentId: "agent",
         event,
@@ -380,6 +388,58 @@ test("secure room bounds an oversized welcome history without dropping the clien
     assert.ok(history.length > 0);
     assert.ok(history.length < originalHistory.length);
     assert.equal(serverSocket.closed, false);
+  } finally {
+    closeSecureRoom(room.token);
+    deleteRoom(room.token);
+  }
+});
+
+test("Paseo timeline replacement disconnects guests so rejoining fetches fresh history", async () => {
+  const room = createRoom("agent", "Replacement room");
+  const fake = fakeDependencies();
+  try {
+    for (const text of ["previous", "replacement history"]) {
+      const [serverSocket, browserSocket] = socketPair();
+      const received = receivedRecords();
+      fake.deps.fetchFullHistory = async () => [
+        {
+          item: { type: "message", text },
+          timestamp: "2026-09-22T00:00:00.000Z",
+        },
+      ];
+      const opened = openSecureRoomSocket(
+        `/v2/rooms/${room.token}/ws`,
+        serverSocket,
+        () => true,
+        async () => true,
+        fake.deps,
+      );
+      const channel = await createClientChannel(
+        browserTransport(browserSocket),
+        room.hostPublicKey,
+        { onmessage: received.onmessage, onerror() {} },
+      );
+      assert.equal(await opened, true);
+      await channel.send(
+        encoder.encode(
+          JSON.stringify({
+            v: 2,
+            kind: "join",
+            joinAttemptId: text,
+            inviteSecret: room.inviteSecret,
+            displayName: "Alice",
+          }),
+        ).buffer,
+      );
+      const welcome = await received.next();
+      assert.equal(welcome.kind, "welcome");
+      assert.deepEqual(
+        welcome.payload.history,
+        await fake.deps.fetchFullHistory("agent"),
+      );
+      fake.publish({ type: "replacement", epoch: "new-epoch" });
+      await waitFor(() => browserSocket.closed);
+    }
   } finally {
     closeSecureRoom(room.token);
     deleteRoom(room.token);
