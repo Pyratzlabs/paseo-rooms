@@ -10,8 +10,7 @@ does not require a separate checkout path or a `roomsPath` configuration file.
 
 ## Requirements
 
-The plugin requires Paseo 0.7.2 or later. That release added support for the
-declared build commands used to prepare this monorepo plugin. Check the Paseo
+The plugin requires Paseo 0.8.x. The plugin uses the separate client/server entries introduced in 0.8. Check the Paseo
 command that you will use for installation:
 
 ```bash

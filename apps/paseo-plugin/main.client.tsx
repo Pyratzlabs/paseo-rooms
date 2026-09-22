@@ -1,5 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { type PluginAgentPanelProps, useAgent, useRpc } from "@getpaseo/plugin";
+import {
+  type PluginAgentPanelProps,
+  useAgent,
+  useRpc,
+} from "@getpaseo/plugin/client";
 import React, { useCallback, useMemo, useState } from "react";
 import { Pressable, Text, TextInput, View } from "react-native";
 import { z } from "zod";
@@ -110,7 +114,12 @@ export function SharePanel({ theme, agentId }: PluginAgentPanelProps) {
         : DEFAULT_CLIENT_ORIGIN;
   const customOriginError =
     clientChoice === "custom" && customOrigin.trim() && !normalizedCustomOrigin;
-  const normalizedRelayOrigin = normalizeRelayOrigin(relayOrigin);
+  const normalizedRelayOrigin = normalizeRelayOrigin(
+    relayOrigin.trim() || DEFAULT_RELAY_ORIGIN,
+  );
+  const isCustomRelay =
+    normalizedRelayOrigin !== null &&
+    normalizedRelayOrigin !== DEFAULT_RELAY_ORIGIN;
   const relayOriginError = relayOrigin.trim() && !normalizedRelayOrigin;
 
   const updateClientOriginPreference = useCallback(
@@ -270,12 +279,12 @@ export function SharePanel({ theme, agentId }: PluginAgentPanelProps) {
               // Preference persistence is optional.
             }
           }}
-          placeholder="wss://relay.example.com"
+          placeholder="Default relay (configured on this machine)"
           placeholderTextColor={colors.foregroundMuted}
           style={styles.input}
           value={relayOrigin}
         />
-        {normalizedRelayOrigin !== DEFAULT_RELAY_ORIGIN ? (
+        {isCustomRelay ? (
           <TextInput
             accessibilityLabel="Custom relay host registration key"
             autoCapitalize="none"
@@ -293,20 +302,20 @@ export function SharePanel({ theme, agentId }: PluginAgentPanelProps) {
             Enter a WSS URL, or a WS loopback URL for local testing.
           </Text>
         ) : null}
-        {normalizedRelayOrigin !== DEFAULT_RELAY_ORIGIN && !relayKey ? (
+        {isCustomRelay && !relayKey ? (
           <Text style={styles.error}>
             A host registration key is required for a custom relay.
           </Text>
+        ) : null}
+        {normalizedRelayOrigin === DEFAULT_RELAY_ORIGIN ? (
+          <Text style={styles.detail}>Using the configured default relay.</Text>
         ) : null}
         <Text style={styles.detail}>This affects new links only.</Text>
       </View>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Create a share link for this agent"
-        disabled={
-          !normalizedRelayOrigin ||
-          (normalizedRelayOrigin !== DEFAULT_RELAY_ORIGIN && !relayKey)
-        }
+        disabled={!normalizedRelayOrigin || (isCustomRelay && !relayKey)}
         onPress={handleShare}
         style={styles.button}
       >

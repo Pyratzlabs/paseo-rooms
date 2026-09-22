@@ -6,3 +6,7 @@ apps/relay-web/public/docs/
 apps/docs/.docusaurus/
 apps/docs/build/
 apps/relay-web/.e2ee-smoke/
+
+# Paseo runtime bundles generated from the plugin workspace.
+/client/
+/server/

@@ -1,7 +1,7 @@
 import {
   createPaseoClient,
   type PaseoAgentHandle,
-  type PaseoAgentStream,
+  type PaseoAgentTimelineEvent,
   type PaseoClient,
 } from "@getpaseo/client";
 import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
@@ -191,14 +191,23 @@ export async function fetchFullHistory(
   return entries.map((e) => ({ item: e.item, timestamp: e.timestamp }));
 }
 
-export type StreamHandler = (event: PaseoAgentStream) => void;
+export type StreamHandler = (
+  event: PaseoAgentTimelineEvent & { timestamp?: string },
+) => void;
 
 export async function subscribeAgent(
   agentId: string,
   handler: StreamHandler,
 ): Promise<() => void> {
   const agent = await getAgentHandle(agentId);
-  return agent.timeline.subscribe(handler);
+  const unsubscribe = agent.timeline.subscribe(handler);
+  try {
+    await unsubscribe.ready;
+    return unsubscribe;
+  } catch (error) {
+    unsubscribe();
+    throw error;
+  }
 }
 
 export async function sendToAgent(
@@ -209,9 +218,7 @@ export async function sendToAgent(
   await agent.send(text);
 }
 
-export async function agentInfo(
-  agentId: string,
-): Promise<{
+export async function agentInfo(agentId: string): Promise<{
   title: string | null;
   status: string | null;
   provider: string | null;

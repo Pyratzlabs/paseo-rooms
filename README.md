@@ -25,7 +25,7 @@ plugin-system findings, and the security model.
 - A running Paseo daemon (desktop app or `paseo` CLI) on
   `ws://127.0.0.1:6767/ws` (override with `PASEO_URL`, and `PASEO_PASSWORD` if
   your daemon requires it).
-- Node.js ≥ 20.
+- Node.js ≥ 20.12.
 
 ## Run the demo
 
@@ -96,8 +96,8 @@ paseo plugin install "$PWD"
 paseo plugin reload paseo-rooms
 ```
 
-Paseo 0.7.2 or later is required: this plugin declares the build commands that
-prepare its monorepo dependencies. Check the command that will install the
+Paseo 0.8.x is required: the plugin declares its supported version range and builds
+separate client/server bundles from the monorepo sources. Check the command that will install the
 plugin—not merely an older shell alias—with:
 
 ```bash

@@ -551,6 +551,11 @@ export async function openSecureRoomSocket(
       live.unsubscribe = await deps.subscribeAgent(
         room.agentId,
         ({ event, timestamp }) => {
+          if (event.type === "replacement") {
+            // Secure clients reconnect and receive a fresh encrypted welcome.
+            for (const member of live.clients) member.close();
+            return;
+          }
           broadcastSecure(live, "event", {
             type: "stream",
             event: publicStreamEvent(event),
