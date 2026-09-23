@@ -1,6 +1,6 @@
 # Relay access implementation plan
 
-Status: implemented locally and verified through the feature lifecycle loop. Independent security and code-quality reviews approve; hosted rollout is separate.
+Status: implemented locally, with verification evidence recorded below. Review verdicts and CI status are tracked in the merge request; hosted rollout is separate.
 
 ## Smallest complete slice
 
