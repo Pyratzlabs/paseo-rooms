@@ -855,11 +855,13 @@ export interface LocalRoomServer {
 export interface StartLocalRoomServerOptions {
   /** Tests can avoid opening a long-lived connection to a real Paseo daemon. */
   connectDaemon?: boolean;
+  /** Resolve a private startup credential without copying it into process.env. */
+  resolveRelayKey?: (origin: string) => string | undefined;
 }
 
 let localServer: Promise<LocalRoomServer> | null = null;
 
-function startRelayDialOut(): void {
+function startRelayDialOut(options: StartLocalRoomServerOptions): void {
   // Room creation performs discovery and admission on demand. Only persisted
   // legacy rooms need an eager connection; v2 rooms are intentionally ephemeral.
   const relayOrigin = defaultRelayOrigin();
@@ -875,7 +877,11 @@ function startRelayDialOut(): void {
       )
         return;
       const key =
-        policy.registration === "key" ? process.env.RELAY_KEY : undefined;
+        policy.registration === "key"
+          ? options.resolveRelayKey
+            ? options.resolveRelayKey(relayOrigin)
+            : process.env.RELAY_KEY
+          : undefined;
       if (policy.registration === "key" && !key)
         throw new Error("A host registration key is required");
       relayClientFor(relayOrigin, key ?? "", policy);
@@ -925,7 +931,7 @@ export async function startLocalRoomServer(
     server.once("error", onError);
     server.listen(PORT, "127.0.0.1", () => {
       server.off("error", onError);
-      if (options.connectDaemon !== false) startRelayDialOut();
+      if (options.connectDaemon !== false) startRelayDialOut(options);
       console.log(`paseo-rooms listening on ${LOCAL_BASE_URL}`);
       if (options.connectDaemon !== false) {
         void ensureConnected()

@@ -1,6 +1,9 @@
 import os from "node:os";
 import path from "node:path";
-import { credentialOrigin } from "./relay-credentials.server";
+import {
+  credentialOrigin,
+  RelayCredentialStore,
+} from "./relay-credentials.server";
 
 interface StartedRoomServer {
   baseUrl: string;
@@ -89,7 +92,12 @@ export async function ensureManagedRoomServer(): Promise<ManagedRoomServer> {
   if (!managed) {
     configureLocalRuntime();
     managed = import("../relay-web/src/server.js")
-      .then(({ startLocalRoomServer }) => startLocalRoomServer())
+      .then(({ startLocalRoomServer }) =>
+        startLocalRoomServer({
+          resolveRelayKey: (origin) =>
+            new RelayCredentialStore().resolve(origin).key,
+        }),
+      )
       .catch((error) => {
         managed = null;
         console.error("paseo-rooms local server failed to start", error);
