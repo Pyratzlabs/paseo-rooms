@@ -1,6 +1,8 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { routeTokenForSecret } from "./relay/route-ownership.js";
+import type { RegisteredRoute } from "./relay/protocol.js";
 import {
   exportPublicKey,
   generateKeyPair,
@@ -22,6 +24,8 @@ export interface SecureRoom {
   createdAt: string;
   protocol: 2;
   inviteSecret: string;
+  /** Independent host-only relay ownership proof, never included in invitations. */
+  ownershipSecret?: string;
   hostPublicKey: string;
   hostKeyPair: KeyPair;
   /**
@@ -75,10 +79,17 @@ export function createRoom(
   agentId: string,
   label: string,
   relayOrigin?: string,
+  protectedRoute = false,
 ): SecureRoom {
   const hostKeyPair = generateKeyPair();
+  const ownershipSecret = protectedRoute
+    ? crypto.randomBytes(32).toString("base64url")
+    : undefined;
   const room: SecureRoom = {
-    token: crypto.randomBytes(32).toString("base64url"),
+    token: ownershipSecret
+      ? routeTokenForSecret(ownershipSecret)!
+      : crypto.randomBytes(32).toString("base64url"),
+    ownershipSecret,
     agentId,
     label,
     createdAt: new Date().toISOString(),
@@ -150,12 +161,16 @@ export function relayTokens(): string[] {
   return [...rooms.keys()];
 }
 
-export function relayRoutes(
-  relayOrigin?: string,
-): Array<{ token: string; protocol: 2 }> {
+export function relayRoutes(relayOrigin?: string): RegisteredRoute[] {
   return [...secureRooms.values()]
     .filter((room) => !relayOrigin || room.relayOrigin === relayOrigin)
-    .map((room) => ({ token: room.token, protocol: 2 as const }));
+    .map((room) => ({
+      token: room.token,
+      protocol: 2 as const,
+      ...(room.ownershipSecret
+        ? { ownershipSecret: room.ownershipSecret }
+        : {}),
+    }));
 }
 
 export function deleteRoom(token: string): boolean {

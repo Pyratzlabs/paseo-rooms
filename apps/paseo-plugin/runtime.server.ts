@@ -1,6 +1,9 @@
 import os from "node:os";
 import path from "node:path";
-import { readSavedRelayKey } from "./relay-credentials.server";
+import {
+  credentialOrigin,
+  RelayCredentialStore,
+} from "./relay-credentials.server";
 
 interface StartedRoomServer {
   baseUrl: string;
@@ -18,6 +21,18 @@ const DEFAULT_RELAY_PUBLIC_URL = "https://paseo-rooms.pyratzlabs.fr";
 const DEFAULT_CLIENT_URL = "https://paseo-rooms-9eb268.gitlab.io";
 
 let managed: Promise<StartedRoomServer> | null = null;
+
+export function configuredRelayOrigin(): string {
+  const origin = credentialOrigin(
+    process.env.PASEO_ROOMS_RELAY_URL ??
+      process.env.RELAY_URL ??
+      process.env.PASEO_ROOMS_PUBLIC_URL ??
+      process.env.PUBLIC_BASE_URL ??
+      DEFAULT_RELAY_PUBLIC_URL,
+  );
+  if (!origin) throw new Error("paseo-rooms: invalid configured relay origin");
+  return origin;
+}
 
 function configureLocalRuntime(): void {
   const port = Number(process.env.PASEO_ROOMS_PORT ?? 3000);
@@ -42,10 +57,7 @@ function configureLocalRuntime(): void {
     process.env.PASEO_ROOMS_RELAY_URL ??
     process.env.RELAY_URL ??
     `${relayPublicUrl.protocol === "https:" ? "wss:" : "ws:"}//${relayPublicUrl.host}/host`;
-  const relayKey =
-    process.env.PASEO_ROOMS_RELAY_KEY ??
-    process.env.RELAY_KEY ??
-    readSavedRelayKey(relayUrl);
+  const relayKey = process.env.PASEO_ROOMS_RELAY_KEY ?? process.env.RELAY_KEY;
   process.env.PORT = String(port);
   process.env.BASE_URL = `http://127.0.0.1:${port}`;
   process.env.PUBLIC_BASE_URL = clientUrl.toString().replace(/\/$/, "");
@@ -80,7 +92,12 @@ export async function ensureManagedRoomServer(): Promise<ManagedRoomServer> {
   if (!managed) {
     configureLocalRuntime();
     managed = import("../relay-web/src/server.js")
-      .then(({ startLocalRoomServer }) => startLocalRoomServer())
+      .then(({ startLocalRoomServer }) =>
+        startLocalRoomServer({
+          resolveRelayKey: (origin) =>
+            new RelayCredentialStore().resolve(origin).key,
+        }),
+      )
       .catch((error) => {
         managed = null;
         console.error("paseo-rooms local server failed to start", error);

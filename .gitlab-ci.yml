@@ -50,6 +50,7 @@ tests:
     - npm run build:docs
     - npm run build:web
     - npm run test:relay
+    - npm run test:relay-access
     - npm run test:relay-client
     - npm run test:e2ee
     - npm run test:secure-client

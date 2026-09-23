@@ -1,13 +1,13 @@
 /**
  * Laptop-side dial-out client for "Relay protocol v1" (docs/plan.md).
  *
- * When `RELAY_URL` (+ `RELAY_KEY`) is set, the room server keeps ONE outbound
+ * For each selected relay, the room server keeps one outbound
  * WebSocket to the relay open forever: it registers the room tokens it owns,
  * answers forwarded HTTP requests and WebSocket events by dispatching into the
  * exact same handlers that serve local traffic, and reconnects with backoff.
  *
  * Nothing about the daemon (credentials, agent ids) crosses this connection —
- * the relay only ever sees room tokens and opaque response bytes.
+ * the relay sees route identifiers, host ownership proofs and opaque payloads.
  */
 
 import { setTimeout as nodeSetTimeout, clearTimeout } from "node:timers";
@@ -78,6 +78,10 @@ function parseRelayFrame(raw: string): RelayFrame | null {
       };
     case "ping":
       return { v: 1, type: "ping", t: typeof f.t === "number" ? f.t : 0 };
+    case "registered":
+      return typeof f.token === "string" && f.token.length <= 128
+        ? { v: 1, type: "registered", token: f.token }
+        : null;
     case "register_rejected":
       return typeof f.token === "string"
         ? { v: 1, type: "register_rejected", token: f.token }
@@ -140,7 +144,7 @@ export interface RelayClientHooks {
 
 export interface RelayClientOptions extends RelayClientHooks {
   url: string;
-  key: string;
+  key?: string;
   /** Backoff bounds; overridable so tests do not wait seconds. */
   minBackoffMs?: number;
   maxBackoffMs?: number;
@@ -155,6 +159,11 @@ export interface RelayClient {
   unregister(tokens: string[]): void;
   /** Claim protocol-aware routes (used by v2 once secure rooms exist). */
   registerRoutes(routes: RegisteredRoute[]): void;
+  /** New relays confirm ownership/admission before an invitation is returned. */
+  registerRoutesConfirmed(
+    routes: RegisteredRoute[],
+    timeoutMs?: number,
+  ): Promise<void>;
   unregisterRoutes(routes: RegisteredRoute[]): void;
   /**
    * Resolve once the relay has accepted the control WebSocket. Room creation
@@ -180,6 +189,91 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     reject(error: Error): void;
     timer: NodeJS.Timeout;
   }>();
+  const registrationWaiters = new Map<
+    string,
+    { resolve(): void; reject(error: Error): void; timer: NodeJS.Timeout }
+  >();
+  // A failed creation must never be resurrected by a reconnect snapshot.
+  const cancelledRoutes = new Set<string>();
+  const routeRetries = new Map<
+    string,
+    { delay: number; timer: NodeJS.Timeout | null }
+  >();
+  function clearRouteRetry(token: string): void {
+    const retry = routeRetries.get(token);
+    if (retry?.timer) clearTimeout(retry.timer);
+    routeRetries.delete(token);
+  }
+  function clearRouteRetries(): void {
+    for (const token of routeRetries.keys()) clearRouteRetry(token);
+  }
+  function retryExistingRoute(token: string): void {
+    const known = () =>
+      (options.currentRoutes?.() ?? []).find(
+        (route) =>
+          route.token === token &&
+          route.protocol === 2 &&
+          route.token.startsWith("o_") &&
+          route.ownershipSecret,
+      );
+    if (
+      stopped ||
+      !known() ||
+      registrationWaiters.has(token) ||
+      cancelledRoutes.has(token)
+    )
+      return;
+    const retry = routeRetries.get(token) ?? { delay: minBackoff, timer: null };
+    if (retry.timer) return;
+    retry.timer = setTimeout(() => {
+      retry.timer = null;
+      const route = known();
+      if (
+        !route ||
+        stopped ||
+        cancelledRoutes.has(token) ||
+        registrationWaiters.has(token) ||
+        ws?.readyState !== WebSocket.OPEN
+      ) {
+        clearRouteRetry(token);
+        return;
+      }
+      send({ v: 1, type: "register", tokens: [], routes: [route] });
+    }, retry.delay);
+    retry.timer.unref?.();
+    retry.delay = Math.min(retry.delay * 2, maxBackoff);
+    routeRetries.set(token, retry);
+  }
+  function cancelRoute(token: string): void {
+    // Keep tombstones only while the owner still exposes the room in its snapshot.
+    // In particular, a queued rejection must not repopulate this set after close
+    // or after the server has removed a failed room and called unregisterRoutes.
+    if (
+      !stopped &&
+      options.currentRoutes?.().some((route) => route.token === token)
+    )
+      cancelledRoutes.add(token);
+  }
+  function finishRegistration(token: string, error?: Error): void {
+    const waiter = registrationWaiters.get(token);
+    if (!waiter) return;
+    clearTimeout(waiter.timer);
+    registrationWaiters.delete(token);
+    if (error) {
+      cancelRoute(token);
+      send({
+        v: 1,
+        type: "unregister",
+        tokens: [],
+        routes: [{ token, protocol: 2 }],
+      });
+      waiter.reject(error);
+    } else waiter.resolve();
+  }
+  function rejectRegistrations(error: Error): void {
+    for (const token of registrationWaiters.keys())
+      finishRegistration(token, error);
+  }
   /** Virtual browser sockets, keyed by the relay's per-socket id. */
   const sockets = new Map<string, VirtualSocket>();
 
@@ -265,14 +359,20 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
   function connect(): void {
     if (stopped) return;
     const socket = new WebSocket(options.url, {
-      headers: { "x-relay-key": options.key },
+      headers: options.key ? { "x-relay-key": options.key } : {},
     });
     ws = socket;
 
     socket.on("open", () => {
       backoff = minBackoff;
       resolveConnectionWaiters();
-      const routes = options.currentRoutes?.() ?? [];
+      const snapshot = options.currentRoutes?.() ?? [];
+      const activeTokens = new Set(snapshot.map((route) => route.token));
+      for (const token of cancelledRoutes)
+        if (!activeTokens.has(token)) cancelledRoutes.delete(token);
+      const routes = snapshot.filter(
+        (route) => !cancelledRoutes.has(route.token),
+      );
       const routedTokens = new Set(routes.map((route) => route.token));
       const tokens = options
         .currentTokens()
@@ -297,10 +397,18 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
           send({ v: 1, type: "pong", t: frame.t });
           break;
 
+        case "registered":
+          clearRouteRetry(frame.token);
+          finishRegistration(frame.token);
+          break;
+
         case "register_rejected":
-          log(
-            `[relay-client] token ${frame.token} is claimed by another room server`,
+          finishRegistration(
+            frame.token,
+            new Error("Relay rejected room registration"),
           );
+          retryExistingRoute(frame.token);
+          log("[relay-client] relay rejected a room registration");
           break;
 
         case "http_request":
@@ -375,8 +483,12 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     const reconnect = (): void => {
       if (socket !== ws) return; // superseded
       ws = null;
+      clearRouteRetries();
       rejectConnectionWaiters(
         new Error("relay control connection closed before it was accepted"),
+      );
+      rejectRegistrations(
+        new Error("Relay disconnected before room registration was confirmed"),
       );
       dropAllSockets();
       if (stopped) return;
@@ -419,7 +531,58 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
       if (routes.length > 0)
         send({ v: 1, type: "register", tokens: [], routes });
     },
+    registerRoutesConfirmed: async (routes, timeoutMs = 5_000) => {
+      if (!ws || ws.readyState !== WebSocket.OPEN || stopped)
+        throw new Error("Relay is not connected");
+      const liveTokens = new Set(
+        (options.currentRoutes?.() ?? []).map((route) => route.token),
+      );
+      for (const token of cancelledRoutes)
+        if (!liveTokens.has(token)) cancelledRoutes.delete(token);
+      if (new Set(routes.map((route) => route.token)).size !== routes.length)
+        throw new Error("Duplicate room registration");
+      if (routes.some((route) => registrationWaiters.has(route.token)))
+        throw new Error("Room registration is already pending");
+      const waits = routes.map(
+        (route) =>
+          new Promise<void>((resolve, reject) => {
+            cancelledRoutes.delete(route.token);
+            const timer = setTimeout(
+              () =>
+                finishRegistration(
+                  route.token,
+                  new Error("Timed out waiting for relay room registration"),
+                ),
+              timeoutMs,
+            );
+            timer.unref?.();
+            registrationWaiters.set(route.token, { resolve, reject, timer });
+          }),
+      );
+      send({ v: 1, type: "register", tokens: [], routes });
+      try {
+        await Promise.all(waits);
+      } catch (error) {
+        for (const route of routes) {
+          cancelRoute(route.token);
+          finishRegistration(
+            route.token,
+            new Error("Room registration cancelled"),
+          );
+        }
+        send({ v: 1, type: "unregister", tokens: [], routes });
+        throw error;
+      }
+    },
     unregisterRoutes: (routes) => {
+      for (const route of routes) {
+        clearRouteRetry(route.token);
+        finishRegistration(
+          route.token,
+          new Error("Room registration cancelled"),
+        );
+        cancelledRoutes.delete(route.token);
+      }
       if (routes.length > 0)
         send({ v: 1, type: "unregister", tokens: [], routes });
     },
@@ -441,8 +604,13 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     connected: () => ws !== null && ws.readyState === WebSocket.OPEN,
     close: () => {
       stopped = true;
+      clearRouteRetries();
       if (retryTimer) clearTimeout(retryTimer);
       rejectConnectionWaiters(new Error("relay client closed"));
+      rejectRegistrations(
+        new Error("Relay client closed before room registration was confirmed"),
+      );
+      cancelledRoutes.clear();
       dropAllSockets();
       ws?.close();
       ws = null;

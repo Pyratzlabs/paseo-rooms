@@ -1,3 +1,8 @@
+import {
+  discoverRelayPolicy,
+  type RelayMode,
+  type RelayPolicy,
+} from "./relay-policy.js";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -441,7 +446,13 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       if (requestedRelay && !relayOrigin)
         return json(400, { error: "a valid relay origin is required" });
       const configuredRelayOrigin = defaultRelayOrigin();
-      const relayKey =
+      const relayMode = body.relayMode ?? process.env.RELAY_MODE ?? "auto";
+      if (relayMode !== "auto" && relayMode !== "legacy-key")
+        return json(400, { error: "invalid relay mode" });
+      const policy = relayOrigin
+        ? await discoverRelayPolicy(relayOrigin, relayMode)
+        : null;
+      const candidateKey =
         relayOrigin &&
         typeof body.relayKey === "string" &&
         body.relayKey.length > 0
@@ -449,9 +460,13 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
           : relayOrigin === configuredRelayOrigin
             ? process.env.RELAY_KEY
             : undefined;
-      if (relayOrigin && !relayKey)
+      const relayKey =
+        policy?.registration === "key" ? candidateKey : undefined;
+      if (policy?.registration === "key" && !relayKey)
         return json(400, { error: "a host registration key is required" });
       const isLegacyRequest = body.protocol === 1;
+      if (isLegacyRequest && policy && !policy.roomProtocols.includes(1))
+        return json(400, { error: "this relay does not support legacy rooms" });
       if (
         isLegacyRequest &&
         relayOrigin &&
@@ -463,22 +478,46 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
       }
       // This is deliberately before createRoom(): a rejected credential
       // change must not leave an unregistered room in the local registry.
-      if (relayOrigin && relayKey) {
-        assertRelayKeyCompatible(relayOrigin, relayKey);
-      }
+      if (relayOrigin) assertRelayKeyCompatible(relayOrigin, relayKey ?? "");
       const relayClient =
-        relayOrigin && relayKey ? relayClientFor(relayOrigin, relayKey) : null;
+        relayOrigin && policy
+          ? relayClientFor(relayOrigin, relayKey ?? "", policy)
+          : null;
       // Wait until the relay has accepted the host control connection before
       // allocating an invite. In particular, an invalid custom relay key must
       // fail this request rather than mint a route the relay will never serve.
-      await relayClient?.waitUntilConnected();
+      try {
+        await relayClient?.waitUntilConnected();
+      } catch (error) {
+        if (relayOrigin && activeRelayRegistrationCount(relayOrigin) === 0) {
+          relayClient?.close();
+          relayClients.delete(relayOrigin);
+        }
+        throw error;
+      }
       const room = isLegacyRequest
         ? createLegacyRoom(agentId, label)
-        : createRoom(agentId, label, relayOrigin ?? undefined);
-      if (relayOrigin && relayKey) {
+        : createRoom(
+            agentId,
+            label,
+            relayOrigin ?? undefined,
+            !!policy?.routeOwnership,
+          );
+      if (relayClient) {
         try {
           if (isSecureRoom(room)) {
-            relayClient!.registerRoutes([{ token: room.token, protocol: 2 }]);
+            const routes = [
+              {
+                token: room.token,
+                protocol: 2 as const,
+                ...(room.ownershipSecret
+                  ? { ownershipSecret: room.ownershipSecret }
+                  : {}),
+              },
+            ];
+            if (policy?.registrationAck)
+              await relayClient.registerRoutesConfirmed(routes);
+            else relayClient.registerRoutes(routes);
           } else {
             relayClient!.register([room.token]);
           }
@@ -486,6 +525,13 @@ export async function handleApiRequest(req: ApiRequest): Promise<ApiResponse> {
           // A client setup failure (including a changed registration key) must
           // not leave a local link whose relay route was never registered.
           deleteRoom(room.token);
+          relayClient.unregisterRoutes([
+            { token: room.token, protocol: room.protocol },
+          ]);
+          if (relayOrigin && activeRelayRegistrationCount(relayOrigin) === 0) {
+            relayClient.close();
+            relayClients.delete(relayOrigin);
+          }
           throw error;
         }
       }
@@ -725,6 +771,7 @@ server.on("upgrade", (req, socket, head) => {
 interface ManagedRelayClient {
   client: RelayClient;
   key: string;
+  policy: RelayPolicy;
 }
 
 const relayClients = new Map<string, ManagedRelayClient>();
@@ -740,10 +787,22 @@ function defaultRelayOrigin(): string | null {
   }
 }
 
-function relayClientFor(relayOrigin: string, key: string): RelayClient {
+function relayClientFor(
+  relayOrigin: string,
+  key: string,
+  policy: RelayPolicy,
+): RelayClient {
   const existing = relayClients.get(relayOrigin);
   if (existing) {
-    if (existing.key !== key) {
+    if (
+      existing.key !== key ||
+      existing.policy.registration !== policy.registration ||
+      existing.policy.registrationAck !== policy.registrationAck
+    ) {
+      if (activeRelayRegistrationCount(relayOrigin) > 0)
+        throw new Error(
+          "Relay access mode or key changed while rooms are active",
+        );
       assertRelayKeyCompatible(relayOrigin, key);
       existing.client.close();
       relayClients.delete(relayOrigin);
@@ -759,12 +818,14 @@ function relayClientFor(relayOrigin: string, key: string): RelayClient {
     // Product room creation is v2. Never leak global legacy route tokens to
     // a separately selected relay; legacy compatibility stays on the default.
     currentTokens: () =>
-      relayOrigin === defaultRelayOrigin() ? relayTokens() : [],
+      policy.roomProtocols.includes(1) && relayOrigin === defaultRelayOrigin()
+        ? relayTokens()
+        : [],
     currentRoutes: () => relayRoutes(relayOrigin),
     handleRequest: handleApiRequest,
     openSocket: openAnyRoomSocket,
   });
-  relayClients.set(relayOrigin, { client, key });
+  relayClients.set(relayOrigin, { client, key, policy });
   return client;
 }
 
@@ -794,26 +855,49 @@ export interface LocalRoomServer {
 export interface StartLocalRoomServerOptions {
   /** Tests can avoid opening a long-lived connection to a real Paseo daemon. */
   connectDaemon?: boolean;
+  /** Resolve a private startup credential without copying it into process.env. */
+  resolveRelayKey?: (origin: string) => string | undefined;
 }
 
 let localServer: Promise<LocalRoomServer> | null = null;
 
-function startRelayDialOut(): void {
+function startRelayDialOut(options: StartLocalRoomServerOptions): void {
+  // Room creation performs discovery and admission on demand. Only persisted
+  // legacy rooms need an eager connection; v2 rooms are intentionally ephemeral.
   const relayOrigin = defaultRelayOrigin();
-  const relayKey = process.env.RELAY_KEY;
-  if (!relayOrigin) return;
-  if (!relayKey) {
-    console.error(
-      "RELAY_URL is set but RELAY_KEY is missing — not dialling out to the relay",
+  if (!relayOrigin || relayTokens().length === 0) return;
+  const mode = process.env.RELAY_MODE ?? "auto";
+  if (mode !== "auto" && mode !== "legacy-key") return;
+  const generation = relayLifecycleGeneration;
+  void discoverRelayPolicy(relayOrigin, mode as RelayMode)
+    .then((policy) => {
+      if (
+        generation !== relayLifecycleGeneration ||
+        !policy.roomProtocols.includes(1)
+      )
+        return;
+      const key =
+        policy.registration === "key"
+          ? options.resolveRelayKey
+            ? options.resolveRelayKey(relayOrigin)
+            : process.env.RELAY_KEY
+          : undefined;
+      if (policy.registration === "key" && !key)
+        throw new Error("A host registration key is required");
+      relayClientFor(relayOrigin, key ?? "", policy);
+    })
+    .catch(() =>
+      console.error(
+        "Unable to restore legacy relay registration; check relay access configuration",
+      ),
     );
-    return;
-  }
-  relayClientFor(relayOrigin, relayKey);
 }
+let relayLifecycleGeneration = 0;
 
 async function closeLocalRoomServer(): Promise<void> {
   if (!localServer) return;
   localServer = null;
+  relayLifecycleGeneration++;
   for (const { client } of relayClients.values()) client.close();
   relayClients.clear();
   await closePaseoConnections();
@@ -847,7 +931,7 @@ export async function startLocalRoomServer(
     server.once("error", onError);
     server.listen(PORT, "127.0.0.1", () => {
       server.off("error", onError);
-      if (options.connectDaemon !== false) startRelayDialOut();
+      if (options.connectDaemon !== false) startRelayDialOut(options);
       console.log(`paseo-rooms listening on ${LOCAL_BASE_URL}`);
       if (options.connectDaemon !== false) {
         void ensureConnected()
