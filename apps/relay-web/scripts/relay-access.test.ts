@@ -333,3 +333,33 @@ test("global saturation preserves host liveness and registration control", async
     await relay.close();
   }
 });
+
+test("open v2 hosts cannot reach legacy HTTP response forwarding", async () => {
+  const relay = await createRelay({ port: 0, authMode: "open", log: () => {} });
+  try {
+    const socket = await host(relay);
+    const route = { ...createRouteOwnership(), protocol: 2 };
+    assert.equal((await claim(socket, route)).type, "registered");
+    const response = await fetch(
+      `http://127.0.0.1:${relay.port}/api/rooms/${route.token}`,
+    );
+    assert.equal(response.status, 404);
+    socket.send(
+      JSON.stringify({
+        v: 1,
+        type: "http_response",
+        id: "1",
+        status: 99999,
+        headers: { "bad name": "bad\r\nvalue" },
+        bodyB64: "",
+      }),
+    );
+    assert.equal(
+      (await claim(socket, { ...createRouteOwnership(), protocol: 2 })).type,
+      "registered",
+    );
+    socket.close();
+  } finally {
+    await relay.close();
+  }
+});

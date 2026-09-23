@@ -116,6 +116,40 @@ const ASSET_TYPES: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
+/** Validate at the Node HTTP boundary; host frames are untrusted even in key mode. */
+function safeResponseHeaders(
+  frame: HttpResponseFrame,
+): Record<string, string> | null {
+  if (
+    !Number.isInteger(frame.status) ||
+    frame.status < 200 ||
+    frame.status > 599
+  )
+    return null;
+  const headers: Record<string, string> = Object.create(null);
+  const hopByHop = new Set([
+    "connection",
+    "keep-alive",
+    "proxy-authenticate",
+    "proxy-authorization",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+    "content-length",
+  ]);
+  try {
+    for (const [name, value] of Object.entries(frame.headers)) {
+      http.validateHeaderName(name);
+      http.validateHeaderValue(name, value);
+      if (!hopByHop.has(name.toLowerCase())) headers[name] = value;
+    }
+    return headers;
+  } catch {
+    return null;
+  }
+}
+
 function safeAsset(
   res: http.ServerResponse,
   directory: string,
@@ -462,9 +496,14 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
         case "http_response": {
           const pending = host.pending.get(frame.id);
           if (!pending) return;
+          const headers = safeResponseHeaders(frame);
+          if (!headers) {
+            pending.fail(502, "invalid room server response");
+            return;
+          }
           host.pending.delete(frame.id);
           clearTimeout(pending.timer);
-          pending.settle(frame);
+          pending.settle({ ...frame, headers });
           break;
         }
 
@@ -690,8 +729,18 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
           finish(() => {
             clearTimeout(timer);
             if (res.headersSent) return;
-            res.writeHead(frame.status, frame.headers);
-            res.end(Buffer.from(frame.bodyB64, "base64"));
+            try {
+              res.writeHead(frame.status, frame.headers);
+              res.end(Buffer.from(frame.bodyB64, "base64"));
+            } catch {
+              // WebSocket delivery is outside the HTTP request callback's catch.
+              // A failed response must never escape into the relay event loop.
+              if (res.headersSent) res.destroy();
+              else {
+                for (const name of res.getHeaderNames()) res.removeHeader(name);
+                plain(res, 502, "invalid room server response");
+              }
+            }
           }),
         fail: (status, message) =>
           finish(() => {

@@ -706,3 +706,48 @@ test("no http_response within the timeout yields 504", async () => {
   laptop.close();
   await waitClose(laptop.ws);
 });
+
+test("invalid host HTTP metadata fails its request without crashing the relay", async () => {
+  const laptop = await FakeLaptop.connect();
+  try {
+    laptop.register("metadata-test");
+    await laptop.waitFor(
+      (f) => f.type === "registered" && f.token === "metadata-test",
+    );
+    const invalidMetadata: Array<{
+      status: number;
+      headers: Record<string, string>;
+    }> = [
+      { status: 99, headers: {} },
+      { status: 1000, headers: {} },
+      { status: 200.5, headers: {} },
+      { status: 200, headers: { "bad header": "value" } },
+      { status: 200, headers: { "x-test": "value\r\ninjected: true" } },
+      { status: 200, headers: { "x-test": "\u0100" } },
+    ];
+    for (const metadata of invalidMetadata) {
+      laptop.autoRespond = () => ({ ...metadata, body: "bad" });
+      const response = await fetch(`${base}/api/rooms/metadata-test`);
+      assert.equal(response.status, 502);
+      await response.text();
+      assert.equal(
+        (await fetch(`${base}/.well-known/paseo-rooms`)).status,
+        200,
+      );
+    }
+    laptop.autoRespond = () => ({
+      status: 200,
+      headers: {
+        "content-type": "text/plain",
+        "content-length": "99999",
+        "transfer-encoding": "invalid",
+      },
+      body: "healthy",
+    });
+    const healthy = await fetch(`${base}/api/rooms/metadata-test`);
+    assert.equal(healthy.status, 200);
+    assert.equal(await healthy.text(), "healthy");
+  } finally {
+    laptop.close();
+  }
+});
