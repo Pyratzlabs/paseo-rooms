@@ -77,12 +77,15 @@ test("runtime bundles activate independently and keep room authority server-side
       "localStorage",
     );
     try {
-      for (const [relay, keyVisible, disabled] of [
-        ["", false, false],
-        ["   ", false, false],
-        ["wss://paseo-rooms.pyratzlabs.fr", false, false],
-        ["wss://custom.example.com", true, true],
-        ["not a URL", false, true],
+      for (const [relay, registration, saved, keyVisible, disabled] of [
+        ["", "open", false, false, false],
+        ["   ", "open", false, false, false],
+        ["wss://paseo-rooms.pyratzlabs.fr", "key", true, false, false],
+        ["wss://custom.example.com", "key", false, true, true],
+        ["wss://custom.example.com", "open", false, false, false],
+        ["wss://custom.example.com", "key", true, false, false],
+        ["not a URL", null, false, false, true],
+        ["wss://unavailable.example.com", null, false, false, true],
       ]) {
         Object.defineProperty(globalThis, "localStorage", {
           configurable: true,
@@ -112,6 +115,7 @@ test("runtime bundles activate independently and keep room authority server-side
             },
             "react-native": {
               View: "View",
+              ScrollView: "ScrollView",
               Text: "Text",
               TextInput: "TextInput",
               Pressable: "Pressable",
@@ -121,7 +125,20 @@ test("runtime bundles activate independently and keep room authority server-side
               useRpc: () => async () => ({}),
             },
             "@tanstack/react-query": {
-              useQuery: () => ({ data: { rooms: [] }, isSuccess: true }),
+              useQuery: ({ queryKey }) =>
+                queryKey[0] === "relay-status"
+                  ? {
+                      data: registration
+                        ? {
+                            registration,
+                            hasSavedKey: saved,
+                            rememberSupported: true,
+                            relayOrigin: relay,
+                            keySource: saved ? "saved" : "none",
+                          }
+                        : undefined,
+                    }
+                  : { data: { rooms: [] }, isSuccess: true },
               useMutation: () => ({}),
               useQueryClient: () => ({}),
             },
@@ -151,8 +168,7 @@ test("runtime bundles activate independently and keep room authority server-side
         assert.equal(
           nodes.some(
             (node) =>
-              node.props?.accessibilityLabel ===
-              "Custom relay host registration key",
+              node.props?.accessibilityLabel === "Relay registration key",
           ),
           keyVisible,
           `key visibility for ${JSON.stringify(relay)}`,
@@ -179,8 +195,14 @@ test("runtime bundles activate independently and keep room authority server-side
       handle: (contract, handler) => handlers.set(contract.name, handler),
     });
     assert.deepEqual(
-      [...handlers.keys()],
-      ["share-session", "list-share-sessions", "revoke-share-session"],
+      [...handlers.keys()].sort(),
+      [
+        "share-session",
+        "list-share-sessions",
+        "revoke-share-session",
+        "relay-status",
+        "forget-relay-key",
+      ].sort(),
     );
     assert.equal(typeof cleanup, "function");
     await cleanup();

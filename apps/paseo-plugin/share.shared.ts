@@ -21,6 +21,8 @@ export const shareSessionRpc = defineRpc({
     relayOrigin: z.string().max(512).optional(),
     /** Trusted local IPC only; never returned from this RPC. */
     relayKey: z.string().min(1).max(4096).optional(),
+    relayMode: z.enum(["auto", "legacy-key"]).optional(),
+    rememberKey: z.boolean().optional(),
   }),
   output: z.object({
     url: z.string(),
@@ -41,5 +43,27 @@ export const listShareSessionsRpc = defineRpc({
 export const revokeShareSessionRpc = defineRpc({
   name: "revoke-share-session",
   input: z.object({ agentId: z.string().min(1), token: z.string().min(1) }),
+  output: z.object({ ok: z.literal(true) }),
+});
+
+/** Policy and credential availability only; never returns a credential. */
+export const relayStatusRpc = defineRpc({
+  name: "relay-status",
+  input: z.object({
+    relayOrigin: z.string().max(512).optional(),
+    relayMode: z.enum(["auto", "legacy-key"]).optional(),
+  }),
+  output: z.object({
+    relayOrigin: z.string(),
+    registration: z.enum(["open", "key"]),
+    hasSavedKey: z.boolean(),
+    keySource: z.enum(["environment", "saved", "legacy", "none"]),
+    rememberSupported: z.boolean(),
+  }),
+});
+
+export const forgetRelayKeyRpc = defineRpc({
+  name: "forget-relay-key",
+  input: z.object({ relayOrigin: z.string().max(512) }),
   output: z.object({ ok: z.literal(true) }),
 });

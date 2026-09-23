@@ -31,6 +31,7 @@ export const MAX_REGISTERED_ROUTES = 256;
 export interface RegisteredRoute {
   token: string;
   protocol: RoomProtocolVersion;
+  ownershipSecret?: string;
 }
 
 // ---- laptop -> relay -------------------------------------------------------
@@ -103,10 +104,21 @@ export interface RegisterRejectedFrame {
   v: 1;
   type: "register_rejected";
   token: string;
+  reason?: "ownership" | "capacity" | "claimed" | "protocol";
+}
+
+export interface RegisteredFrame {
+  v: 1;
+  type: "registered";
+  token: string;
 }
 
 export type RelayFrame =
-  HttpRequestFrame | WsEventFrame | PingFrame | RegisterRejectedFrame;
+  | HttpRequestFrame
+  | WsEventFrame
+  | PingFrame
+  | RegisterRejectedFrame
+  | RegisteredFrame;
 
 // ---- parsing ---------------------------------------------------------------
 
@@ -117,7 +129,7 @@ function isStringArray(value: unknown): value is string[] {
 }
 
 const ROUTE_TOKEN_RE = /^[A-Za-z0-9_-]{1,128}$/;
-const V2_ROUTE_ID_RE = /^[A-Za-z0-9_-]{43}$/;
+const V2_ROUTE_ID_RE = /^(?:o_)?[A-Za-z0-9_-]{43}$/;
 
 export function isRouteToken(value: unknown): value is string {
   return typeof value === "string" && ROUTE_TOKEN_RE.test(value);
@@ -140,7 +152,19 @@ function parseRegisteredRoutes(value: unknown): RegisteredRoute[] | null {
     if (route.protocol === 2 && !V2_ROUTE_ID_RE.test(route.token)) return null;
     if (seen.has(route.token)) return null;
     seen.add(route.token);
-    routes.push({ token: route.token, protocol: route.protocol });
+    if (
+      route.ownershipSecret !== undefined &&
+      (typeof route.ownershipSecret !== "string" ||
+        !/^[A-Za-z0-9_-]{43}$/.test(route.ownershipSecret))
+    )
+      return null;
+    routes.push({
+      token: route.token,
+      protocol: route.protocol,
+      ...(typeof route.ownershipSecret === "string"
+        ? { ownershipSecret: route.ownershipSecret }
+        : {}),
+    });
   }
   return routes;
 }
@@ -273,8 +297,7 @@ export function parseV2OuterRecord(raw: string): V2OuterRecord | null {
   if (typeof msg !== "object" || msg === null) return null;
   const frame = msg as Record<string, unknown>;
   if (frame.v !== 2) return null;
-  if (frame.type !== "handshake" && frame.type !== "secure")
-    return null;
+  if (frame.type !== "handshake" && frame.type !== "secure") return null;
   if (typeof frame.data !== "string" || !BASE64URL_RE.test(frame.data))
     return null;
   const data = Buffer.from(frame.data, "base64url");

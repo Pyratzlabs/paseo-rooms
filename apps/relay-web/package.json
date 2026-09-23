@@ -33,7 +33,8 @@
     "test:public-events": "node --import tsx --test scripts/public-events.test.ts",
     "test:presence": "node --import tsx --test scripts/presence.test.ts",
     "test:ci": "node --test scripts/ci-config.test.mjs",
-    "test:lock": "node --test scripts/package-lock.test.mjs"
+    "test:lock": "node --test scripts/package-lock.test.mjs",
+    "test:relay-access": "node --import tsx --test scripts/relay-access.test.ts scripts/relay-host-access.test.ts scripts/relay-policy.test.ts"
   },
   "dependencies": {
     "@getpaseo/client": "^0.8.0",

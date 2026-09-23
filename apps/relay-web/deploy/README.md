@@ -2,7 +2,7 @@
 
 The public deployment contains the relay (`src/relay/`) and the built landing
 page/shared-room React bundle. The room server and Paseo daemon always stay on
-developers' laptops — see `docs/plan.md`. The laptop dials *out* to the relay;
+developers' laptops — see `docs/plan.md`. The laptop dials _out_ to the relay;
 the relay never sees daemon credentials.
 
 ## VPS prerequisites
@@ -15,14 +15,14 @@ the relay never sees daemon credentials.
 
 ## Env vars
 
-| Var            | Used by         | Meaning                                                        |
-|----------------|-----------------|------------------------------------------------------------------|
-| `ROOMS_DOMAIN` | caddy, deploy.sh | Public domain the relay is served on, e.g. `rooms.example.com` |
-| `RELAY_KEY`    | relay, deploy.sh | Shared secret laptops present in `x-relay-key` to register     |
-| `RELAY_PORT`   | relay (compose sets this to `8080` internally) | Port the relay listens on inside its container |
-| `SSH_TARGET`   | deploy.sh       | `user@host` (or an `~/.ssh/config` alias) for the VPS           |
-| `REMOTE_DIR`   | deploy.sh (optional) | Remote checkout dir, default `~/paseo-rooms`               |
-| `SSH_OPTS`     | deploy.sh (optional) | Extra ssh/rsync flags, e.g. `-i ~/.ssh/id_deploy`           |
+| Var            | Used by                                        | Meaning                                                        |
+| -------------- | ---------------------------------------------- | -------------------------------------------------------------- |
+| `ROOMS_DOMAIN` | caddy, deploy.sh                               | Public domain the relay is served on, e.g. `rooms.example.com` |
+| `RELAY_KEY`    | relay, deploy.sh                               | Shared secret laptops present in `x-relay-key` to register     |
+| `RELAY_PORT`   | relay (compose sets this to `8080` internally) | Port the relay listens on inside its container                 |
+| `SSH_TARGET`   | deploy.sh                                      | `user@host` (or an `~/.ssh/config` alias) for the VPS          |
+| `REMOTE_DIR`   | deploy.sh (optional)                           | Remote checkout dir, default `~/paseo-rooms`                   |
+| `SSH_OPTS`     | deploy.sh (optional)                           | Extra ssh/rsync flags, e.g. `-i ~/.ssh/id_deploy`              |
 
 `RELAY_KEY` and `ROOMS_DOMAIN` are never baked into the Docker image — they're
 supplied at deploy time and written to a `.env` file next to `compose.yml` on
@@ -71,10 +71,10 @@ keeps this running in the background.
 `main`, it deploys the LAN relay using the project runner tagged
 `paseo-rooms`. Configure these GitLab **Settings -> CI/CD -> Variables**:
 
-- `DEPLOY_SSH_PRIVATE_KEY` — dedicated deploy key, preferably a *File* type
+- `DEPLOY_SSH_PRIVATE_KEY` — dedicated deploy key, preferably a _File_ type
   variable. Add its public key to the deployment user's `authorized_keys`.
 - `DEPLOY_SSH_KNOWN_HOSTS` — the target's pinned SSH host key(s), preferably a
-  *File* type variable (obtain with `ssh-keyscan -H <host>` from a trusted
+  _File_ type variable (obtain with `ssh-keyscan -H <host>` from a trusted
   network).
 - `DEPLOY_SSH_TARGET` — e.g. `deployer@192.168.193.100`.
 - `RELAY_KEY` — the shared relay secret, masked.
@@ -93,3 +93,62 @@ setup is migrated first.
 
 The relay has no `/healthz` endpoint. `deploy.sh` and the workflow use the
 public root as the liveness check.
+
+## Public and private registration
+
+The relay defaults to `RELAY_AUTH_MODE=key`. A missing `RELAY_KEY` in this mode
+fails startup. New relays expose `GET /.well-known/paseo-rooms` so the plugin
+can discover whether a key is needed without transmitting any credentials.
+
+An explicitly public relay can be exercised locally with:
+
+```bash
+RELAY_AUTH_MODE=open RELAY_PORT=8787 npm run relay
+```
+
+Select `ws://127.0.0.1:8787` under the plugin's Advanced settings. Public
+connections send no registration key. Internet deployments must terminate TLS
+and use a `wss://` origin. Existing Compose and CI deployment paths stay private;
+this change does not switch the hosted deployment to public registration.
+
+New room routes carry an independent ownership proof, so knowledge of a room
+address does not permit registering it after its host disconnects or the relay
+restarts. A new link is returned only after the relay confirms registration.
+The invitation secret and encrypted room traffic remain separate from relay
+access. Rooms themselves remain in memory and disappear when the laptop room
+server restarts.
+
+For an older relay without discovery, select **Legacy private relay** in
+Advanced settings (standalone server: `RELAY_MODE=legacy-key`). Automatic
+mode reports discovery failures instead of assuming an access policy.
+
+Private relay keys can be entered once and remembered on Unix machines in an
+owner-only configuration file. They are never stored in browser preferences.
+The existing endpoint-matched `paseo-rooms.env` remains a migration source;
+Forget suppresses that fallback. Environment-managed keys must be changed in
+the machine configuration. Saving is unavailable on Windows until a supported
+credential-store adapter is provided; keys can still be entered for use in the
+current flow. Keys are saved only after a successful share operation.
+
+Connection and traffic bounds are local safeguards, not a hosted capacity
+benchmark. Measure expected concurrency and configure the reverse proxy's own
+connection/traffic limits before opening production admission. Direct socket
+addresses are authoritative unless proxy trust is explicitly configured; do
+not trust arbitrary client-supplied forwarding headers.
+
+Operator controls for the relay executable:
+
+- `RELAY_AUTH_MODE=key|open` (default `key`).
+- `RELAY_ADMISSION_ENABLED=false` temporarily rejects new admissions without
+  revoking established rooms. Restart the relay to apply configuration changes.
+- `RELAY_TRUSTED_PROXY_ADDRESSES` is a comma-separated list of exact immediate
+  proxy IP addresses as seen by the relay socket. Trusted proxies must overwrite
+  `X-Forwarded-For` with a single client IP; lists and untrusted headers are ignored.
+  Without this setting, clients behind a proxy share its per-source limits.
+
+Current built-in defaults include 256 hosts (32 per source), 1,024 guest sockets
+(128 per source, 64 per room), 4,096 routes (256 per host), a 2 MiB outgoing
+queue limit, and a five-minute guest idle timeout. `createRelay({ limits: ... })`
+allows validated overrides for embedding/testing; the executable currently uses
+these defaults. Hosting capacity and proxy-level denial-of-service controls
+must be assessed separately before general availability.
