@@ -107,9 +107,9 @@ uses `compose.lan.yml`. Do not run the Caddy stack on the existing proxy host.
 
 ## Health check
 
-The relay has no `/healthz` endpoint. CI checks
-`/.well-known/paseo-rooms` and the expected registration mode; `deploy.sh`
-checks the public root for liveness.
+The relay has no `/healthz` endpoint. Both CI and `deploy.sh` check
+`/.well-known/paseo-rooms` and the expected registration mode before reporting
+deployment success. The manual script also verifies discovery through public HTTPS.
 
 ## Public and private registration
 

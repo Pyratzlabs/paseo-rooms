@@ -17,8 +17,7 @@
 #   1. build the public UI and rsync deploy/, src/relay/, and public/ to the VPS
 #   2. write/refresh a .env file next to compose.yml on the VPS
 #   3. `docker compose build && up -d`
-#   4. curl the relay's public URL and confirm it responds at all (the relay
-#      has no /healthz; any HTTP response, even 404, means it's up)
+#   4. verify discovery advertises the requested registration mode over HTTPS
 
 set -euo pipefail
 
@@ -78,17 +77,23 @@ echo "==> docker compose build + up -d"
 # shellcheck disable=SC2086
 ssh $SSH_OPTS "$SSH_TARGET" "cd '$REMOTE_DIR/deploy' && docker compose --env-file .env -f compose.yml build && docker compose --env-file .env -f compose.yml up -d"
 
-echo "==> Waiting for https://$ROOMS_DOMAIN/ to respond (TLS issuance can take a moment)"
+echo "==> Waiting for https://$ROOMS_DOMAIN/.well-known/paseo-rooms to advertise $RELAY_AUTH_MODE registration (TLS issuance can take a moment)"
 attempts=0
 max_attempts=30
-until curl -fsS -o /dev/null -w '%{http_code}' "https://$ROOMS_DOMAIN/" 2>/dev/null | grep -qE '^[0-9]{3}$'; do
+until curl -fsS --connect-timeout 5 --max-time 10 "https://$ROOMS_DOMAIN/.well-known/paseo-rooms" 2>/dev/null | node -e '
+  try {
+    const policy = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+    process.exit(policy.registration === process.argv[1] ? 0 : 1);
+  } catch {
+    process.exit(1);
+  }
+' "$RELAY_AUTH_MODE"; do
   attempts=$((attempts + 1))
   if [[ "$attempts" -ge "$max_attempts" ]]; then
-    fail "relay did not respond at https://$ROOMS_DOMAIN/ after $max_attempts attempts"
+    fail "relay did not advertise registration mode $RELAY_AUTH_MODE at https://$ROOMS_DOMAIN/.well-known/paseo-rooms after $max_attempts attempts"
   fi
   sleep 2
 done
 
-status="$(curl -sS -o /dev/null -w '%{http_code}' "https://$ROOMS_DOMAIN/" || true)"
-echo "==> Relay responded with HTTP $status"
+echo "==> Relay registration mode verified: $RELAY_AUTH_MODE"
 echo "==> Deploy complete"

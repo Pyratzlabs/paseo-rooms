@@ -175,6 +175,52 @@ test("verification jobs run for merge request pipelines", () => {
   }
 });
 
+test("manual deployment succeeds only when discovery reports the requested mode", () => {
+  const verification = deployScript.slice(
+    deployScript.indexOf('echo "==> Waiting for https://'),
+  );
+  assert.ok(verification.startsWith('echo "==> Waiting for https://'));
+  const script = `
+set -euo pipefail
+fail() { echo "$*" >&2; exit 1; }
+curl() { printf '%s' "$DISCOVERY_FIXTURE"; return "$CURL_STATUS"; }
+sleep() { :; }
+${verification}`;
+  const cases = [
+    { mode: "open", body: '{"registration":"open"}', success: true },
+    { mode: "key", body: '{"registration": "key"}', success: true },
+    { mode: "open", body: '{"registration":"key"}', success: false },
+    { mode: "key", body: '{"registration":"open"}', success: false },
+    { mode: "open", body: "not JSON", success: false },
+    { mode: "open", body: "{}", success: false },
+    {
+      mode: "open",
+      body: '{"registration":"open"}',
+      curlStatus: 22,
+      success: false,
+    },
+  ];
+  for (const { mode, body, curlStatus = 0, success } of cases) {
+    const result = spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ROOMS_DOMAIN: "fixture.invalid",
+        RELAY_AUTH_MODE: mode,
+        DISCOVERY_FIXTURE: body,
+        CURL_STATUS: String(curlStatus),
+      },
+    });
+    assert.equal(result.status === 0, success, result.stderr);
+    if (success) {
+      assert.match(result.stdout, /Deploy complete/);
+    } else {
+      assert.doesNotMatch(result.stdout, /Deploy complete/);
+      assert.match(result.stderr, /registration mode.*after 30 attempts/);
+    }
+  }
+});
+
 test("CI schedules only deployments with complete registration and SSH settings", () => {
   const rule = config.match(
     /^deploy:[\s\S]*?^  rules:\n    - if: ([^\n]+)/m,
