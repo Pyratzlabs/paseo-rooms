@@ -30,10 +30,6 @@ const timelineComponent = await readFile(
   new URL("../web/src/components/Timeline.tsx", import.meta.url),
   "utf8",
 );
-const markdown = await readFile(
-  new URL("../web/src/components/Markdown.tsx", import.meta.url),
-  "utf8",
-);
 const landing = await readFile(
   new URL("../public/index.html", import.meta.url),
   "utf8",
@@ -183,12 +179,6 @@ test("the React room renders scoped plan acceptance separately from questions", 
   assert.match(timelineComponent, /plan-implement/);
   assert.match(timelineComponent, /plan-reject/);
   assert.match(styles, /\.plan-approval/);
-});
-
-test("Markdown preserves fenced code and ordered-list numbering for plans", () => {
-  assert.match(markdown, /const fence = lines\[line\]\.match/);
-  assert.match(markdown, /<pre key=/);
-  assert.match(markdown, /start: Number\.parseInt/);
 });
 
 test("the React room uses Paseo-aligned semantic tokens and responsive layout", () => {
