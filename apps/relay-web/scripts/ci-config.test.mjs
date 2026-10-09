@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -179,23 +179,18 @@ test("CI selects and persists public or private registration before deploying", 
     /^deploy:[\s\S]*?^  script:\n    - \|\n([\s\S]*?)^  rules:/m,
   )?.[1];
   assert.ok(block, "deployment script must be present");
-  const script = block.replace(/^      /gm, "");
+  // Shell functions avoid executing files from a potentially noexec tmpdir.
+  // Capture the SSH command as data; never run it against a remote host.
+  const script = `
+ssh() {
+  case "$2" in
+    "printf '%s' "*) printf '%s' "$2" > "$POLICY_OUTPUT" ;;
+  esac
+}
+rsync() { :; }
+${block.replace(/^      /gm, "")}`;
   const directory = mkdtempSync(join(tmpdir(), "rooms-deploy-policy-"));
   const output = join(directory, "environment");
-  writeFileSync(join(directory, "rsync"), "#!/bin/sh\nexit 0\n", {
-    mode: 0o700,
-  });
-  // Capture only the generated environment from the deployment SSH command.
-  // No command reaches a remote host during this test.
-  writeFileSync(
-    join(directory, "ssh"),
-    `#!/usr/bin/env node
-const command = process.argv.at(-1);
-const payload = command.match(/^printf '%s' '([^']+)'/);
-if (payload) require('node:fs').writeFileSync(process.env.POLICY_OUTPUT, Buffer.from(payload[1], 'base64'));
-`,
-    { mode: 0o700 },
-  );
   const cases = [
     {
       domain: "paseo-rooms.pyratzlabs.fr",
@@ -237,7 +232,6 @@ if (payload) require('node:fs').writeFileSync(process.env.POLICY_OUTPUT, Buffer.
         encoding: "utf8",
         env: {
           ...process.env,
-          PATH: `${directory}:${process.env.PATH}`,
           POLICY_OUTPUT: output,
           DEPLOY_SSH_TARGET: "fixture-host",
           DEPLOY_REMOTE_DIR: "/fixture",
@@ -251,7 +245,10 @@ if (payload) require('node:fs').writeFileSync(process.env.POLICY_OUTPUT, Buffer.
         assert.match(result.stderr, error);
       } else {
         assert.equal(result.status, 0, result.stderr);
-        const environment = readFileSync(output, "utf8");
+        const command = readFileSync(output, "utf8");
+        const payload = command.match(/^printf '%s' '([^']+)'/);
+        assert.ok(payload, "deployment must persist its environment");
+        const environment = Buffer.from(payload[1], "base64").toString("utf8");
         assert.match(
           environment,
           new RegExp(`^RELAY_AUTH_MODE=${expected}$`, "m"),
