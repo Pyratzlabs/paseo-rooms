@@ -34,12 +34,22 @@ the VPS (`chmod 600`).
 1. Point DNS: create an A record for `ROOMS_DOMAIN` -> the VPS IP.
 2. Choose `RELAY_AUTH_MODE=open` for public registration, or keep `key`
    and supply a long random `RELAY_KEY` for a private relay.
-3. From your machine (or CI — see below), deploy:
+3. From your machine (or CI — see below), deploy an open relay without a key:
 
    ```bash
    SSH_TARGET=deploy@vps.example.com \
    ROOMS_DOMAIN=rooms.example.com \
-   RELAY_KEY=<long random secret> \
+   RELAY_AUTH_MODE=open \
+   bash apps/relay-web/deploy/deploy.sh
+   ```
+
+   Or deploy a private relay that requires a registration key:
+
+   ```bash
+   SSH_TARGET=deploy@vps.example.com \
+   ROOMS_DOMAIN=rooms.example.com \
+   RELAY_AUTH_MODE=key \
+   RELAY_KEY='replace-with-a-long-random-secret' \
    bash apps/relay-web/deploy/deploy.sh
    ```
 
@@ -55,11 +65,13 @@ the VPS (`chmod 600`).
 ## How the laptop connects
 
 On each developer's laptop, run the room server in dial-out mode instead of
-(or alongside) its local listener:
+(or alongside) its local listener. For an open relay:
 
 ```bash
-RELAY_URL=wss://rooms.example.com/host RELAY_KEY=<same secret as the VPS> npm start
+RELAY_URL=wss://rooms.example.com/host npm start
 ```
+
+For a private relay, also set `RELAY_KEY` to the same secret as the VPS.
 
 The room server registers its share tokens with the relay on boot and on
 every room create/revoke, and reconnects with backoff if the relay restarts.
