@@ -10,8 +10,8 @@ does not require a separate checkout path or a `roomsPath` configuration file.
 
 ## Requirements
 
-The plugin requires Paseo 0.8.x. The plugin uses the separate client/server entries introduced in 0.8. Check the Paseo
-command that you will use for installation:
+The plugin requires Paseo 0.10.3 or newer within the 0.10 series. Older versions
+are unsupported. Check the Paseo command that you will use for installation:
 
 ```bash
 paseo --version

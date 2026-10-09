@@ -7,8 +7,8 @@ activates the plugin.
 
 ## Install
 
-Paseo 0.8.x is required because the plugin uses separate client/server entries. The currently supported installation path is a trusted
-local checkout:
+Paseo 0.10.3 or newer within the 0.10 series is required. Older versions are
+unsupported. The supported installation path is a trusted local checkout:
 
 ```sh
 paseo --version
@@ -17,8 +17,9 @@ paseo plugin status paseo-rooms
 ```
 
 The plugin owns the room server in its daemon-side process. It starts one
-loopback listener on demand, keeps the admin token server-side, and closes the
-listener when Paseo reloads, updates, disables, or shuts down the plugin. No
+loopback listener on demand, waits up to 10 seconds for its daemon connection,
+keeps the admin token server-side, and closes the listener when Paseo reloads, updates, disables, or shuts down the plugin. A failed
+or timed-out connection closes the listener so sharing can be retried. No
 checkout path, detached child process, or `roomsPath` configuration is required.
 
 After changing that checkout, apply it with `paseo plugin reload paseo-rooms`.
@@ -67,7 +68,7 @@ restarts the in-memory room runtime, so existing share links are invalidated.
 `npm run build:plugin` at the repository root bundles this workspace's
 `index.client.tsx` and `index.server.ts` into ignored `client/plugin.js` and
 `server/plugin.js` artifacts. The root runtime entries load those artifacts.
-This preserves the monorepo layout while satisfying Paseo 0.8's directory
+This preserves the monorepo layout while satisfying Paseo's directory
 boundaries; the browser bundle never contains the local room server.
 The manifest runs this build before verification on installation and reload.
 Edit the workspace sources, not the generated bundles.

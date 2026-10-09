@@ -96,8 +96,9 @@ paseo plugin install "$PWD"
 paseo plugin reload paseo-rooms
 ```
 
-Paseo 0.8.x is required: the plugin declares its supported version range and builds
-separate client/server bundles from the monorepo sources. Check the command that will install the
+Paseo 0.10.3 or newer within the 0.10 series is required. The plugin declares its
+supported version range and builds separate client/server bundles from the
+monorepo sources. Check the command that will install the
 plugin—not merely an older shell alias—with:
 
 ```bash

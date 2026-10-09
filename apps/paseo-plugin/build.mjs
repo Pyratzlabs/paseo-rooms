@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
-// Paseo 0.8 accepts local modules only under client/, server/, or shared/.
+// Paseo accepts local modules only under client/, server/, or shared/.
 // Bundle the workspace sources (including the matching room server) into those
 // runtime directories before Paseo compiles the root entries. Keep host-provided
 // modules external so hooks, RPCs, and schemas use Paseo's own runtime instances.

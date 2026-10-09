@@ -26,7 +26,7 @@ test("the repository root is an installable Paseo Rooms plugin", () => {
     ["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"],
     ["npm", "run", "verify:plugin-distribution"],
   ]);
-  assert.equal(manifest.requirements.paseo, ">=0.8.0 <0.10.0");
+  assert.equal(manifest.requirements.paseo, ">=0.10.3 <0.11.0");
   assert.match(clientEntry, /\.\/client\/plugin.js/);
   assert.match(serverEntry, /\.\/server\/plugin.js/);
   assert.equal(fs.existsSync(path.join(repositoryRoot, "index.ts")), false);

@@ -4,7 +4,6 @@ import {
   type PaseoAgentTimelineEvent,
   type PaseoClient,
 } from "@getpaseo/client";
-import { DaemonClient } from "@getpaseo/client/internal/daemon-client";
 import {
   buildRoomQuestionUpdatedInput,
   projectRoomQuestion,
@@ -18,7 +17,7 @@ const PASEO_PASSWORD = process.env.PASEO_PASSWORD;
 
 let client: PaseoClient | null = null;
 let connecting: Promise<PaseoClient> | null = null;
-let permissionClient: DaemonClient | null = null;
+const pendingConnections = new Map<PaseoClient, () => void>();
 let connectionEpoch = 0;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryWake: (() => void) | null = null;
@@ -29,17 +28,29 @@ export function isConnected(): boolean {
 }
 
 async function connect(): Promise<PaseoClient> {
+  const epoch = connectionEpoch;
   const c = createPaseoClient({
     url: PASEO_URL,
     password: PASEO_PASSWORD,
     reconnect: { enabled: true },
   });
+  const canceled = new Promise<never>((_, reject) => {
+    pendingConnections.set(c, () =>
+      reject(new Error("Paseo daemon connection stopped")),
+    );
+  });
   try {
-    await c.connect();
+    // SDK close stops transport retries but does not settle connect(). Race an
+    // explicit cancellation so callers also finish when managed startup stops.
+    await Promise.race([c.connect(), canceled]);
+    if (epoch !== connectionEpoch)
+      throw new Error("Paseo daemon connection stopped");
     return c;
   } catch (error) {
     await closeQuietly(c);
     throw error;
+  } finally {
+    pendingConnections.delete(c);
   }
 }
 
@@ -72,17 +83,15 @@ export async function closePaseoConnections(): Promise<void> {
   retryWake?.();
   retryWake = null;
 
-  const activeClient = client;
-  const activePermissionClient = permissionClient;
+  const clientsToClose = new Set(pendingConnections.keys());
+  if (client) clientsToClose.add(client);
+  for (const cancel of pendingConnections.values()) cancel();
+  pendingConnections.clear();
   client = null;
   connecting = null;
-  permissionClient = null;
   handles.clear();
 
-  await Promise.all([
-    closeQuietly(activeClient),
-    closeQuietly(activePermissionClient),
-  ]);
+  await Promise.all([...clientsToClose].map(closeQuietly));
 }
 
 /**
@@ -268,21 +277,11 @@ export async function answerRoomQuestion(
     ? "allow"
     : roomQuestionActionBehavior(request, actionId);
   if (!behavior) return false;
-  if (!permissionClient) {
-    permissionClient = new DaemonClient({
-      url: PASEO_URL,
-      password: PASEO_PASSWORD,
-      clientType: "cli",
-      clientId: "paseo-rooms",
-    });
-    await permissionClient.connect();
-  }
-  await permissionClient.respondToPermission(
-    agentId,
+  await agent.respondToPermission({
     requestId,
-    updatedInput
+    response: updatedInput
       ? { behavior: "allow", updatedInput }
       : { behavior, selectedActionId: actionId as string },
-  );
+  });
   return true;
 }
