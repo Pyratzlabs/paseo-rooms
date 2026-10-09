@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 
 const config = await readFile(
   new URL("../../../.gitlab-ci.yml", import.meta.url),
@@ -172,6 +173,76 @@ test("verification jobs run for merge request pipelines", () => {
       `${job} must run in an MR pipeline`,
     );
   }
+});
+
+test("CI schedules only deployments with complete registration and SSH settings", () => {
+  const rule = config.match(
+    /^deploy:[\s\S]*?^  rules:\n    - if: ([^\n]+)/m,
+  )?.[1];
+  assert.ok(rule, "deployment rule must be present");
+  const defaults = {
+    CI_COMMIT_BRANCH: "main",
+    DEPLOY_SSH_TARGET: "fixture-host",
+    DEPLOY_SSH_PRIVATE_KEY: "fixture-private-key",
+    DEPLOY_SSH_KNOWN_HOSTS: "fixture-known-hosts",
+    ROOMS_DOMAIN: "private.example.com",
+  };
+  // Evaluate the actual GitLab rule against fixture variables. Unset variables
+  // are null; explicitly empty variables are empty strings in GitLab rules.
+  const scheduled = (variables) =>
+    Boolean(
+      runInNewContext(
+        rule.replace(/\$([A-Z_]+)/g, (_, name) =>
+          JSON.stringify({ ...defaults, ...variables }[name] ?? null),
+        ),
+        {},
+        { timeout: 1000 },
+      ),
+    );
+  for (const mode of [null, "", "key"]) {
+    assert.equal(scheduled({ RELAY_AUTH_MODE: mode }), false);
+    assert.equal(
+      scheduled({ RELAY_AUTH_MODE: mode, RELAY_KEY: "fixture-key" }),
+      true,
+    );
+  }
+  for (const mode of [null, "", "open"]) {
+    assert.equal(
+      scheduled({
+        ROOMS_DOMAIN: "paseo-rooms.pyratzlabs.fr",
+        RELAY_AUTH_MODE: mode,
+      }),
+      true,
+    );
+  }
+  assert.equal(scheduled({ RELAY_AUTH_MODE: "open" }), true);
+  assert.equal(
+    scheduled({
+      ROOMS_DOMAIN: "paseo-rooms.pyratzlabs.fr",
+      RELAY_AUTH_MODE: "key",
+    }),
+    false,
+  );
+  assert.equal(
+    scheduled({ RELAY_AUTH_MODE: "invalid", RELAY_KEY: "fixture-key" }),
+    false,
+  );
+  for (const name of [
+    "DEPLOY_SSH_TARGET",
+    "DEPLOY_SSH_PRIVATE_KEY",
+    "DEPLOY_SSH_KNOWN_HOSTS",
+  ]) {
+    for (const missing of [null, ""]) {
+      assert.equal(
+        scheduled({ RELAY_AUTH_MODE: "open", [name]: missing }),
+        false,
+      );
+    }
+  }
+  assert.equal(
+    scheduled({ CI_COMMIT_BRANCH: "feature", RELAY_AUTH_MODE: "open" }),
+    false,
+  );
 });
 
 test("CI selects and persists public or private registration before deploying", () => {
