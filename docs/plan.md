@@ -1,5 +1,12 @@
 # paseo-rooms — implementation plan (relay + plugin)
 
+**Historical plan:** this describes the original private, key-protected v1
+relay. For current setup, see [Run your own relay](how-to/run-your-own-relay.md)
+and [public/private registration](design/relay-host-enrollment.md). Open
+relays accept protected v2 routes without a registration key; private relays
+still require their operator's key. The v1 key requirements below describe
+the legacy protocol, not a prerequisite for using the hosted public relay.
+
 Target architecture (decided; do not re-litigate in slices):
 
 ```

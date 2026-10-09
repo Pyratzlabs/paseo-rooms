@@ -8,7 +8,8 @@
 #
 # Put a TLS reverse proxy in front of this stack before using it from a browser
 # client. Laptop side then dials: RELAY_URL=wss://<relay-domain>/host
-# RELAY_KEY=... npm start
+# For a private relay, also set RELAY_KEY=... when starting the laptop server.
+# Open relays do not require a registration key.
 services:
   relay:
     build:
