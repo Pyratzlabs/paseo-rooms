@@ -54,3 +54,23 @@ test("multiple Mermaid blocks render independently", () => {
   );
   assert.equal((html.match(/aria-label="Mermaid diagram"/g) ?? []).length, 2);
 });
+
+test("GFM tables render headers, alignment, inline formatting and escaped pipes", () => {
+  const html = render(
+    "Before\n\n| Billing method | Cost |\n| :--- | ---: |\n| **Fixed** price | `a\\|b` |\n\nAfter",
+  );
+  assert.match(html, /<table>/);
+  assert.match(html, /<th[^>]*>Billing method<\/th>/);
+  assert.match(html, /text-align:right/);
+  assert.match(html, /<strong>Fixed<\/strong>/);
+  assert.match(html, /<code>a\|b<\/code>/);
+  assert.match(html, /After/);
+});
+
+test("HTML and executable Markdown URLs never become active content", () => {
+  const html = render(
+    "<script>alert(1)</script>\n\n[unsafe](javascript:alert%281%29)",
+  );
+  assert.doesNotMatch(html, /<script>/);
+  assert.doesNotMatch(html, /href="javascript:/);
+});
