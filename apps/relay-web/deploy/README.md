@@ -15,14 +15,15 @@ the relay never sees daemon credentials.
 
 ## Env vars
 
-| Var            | Used by                                        | Meaning                                                        |
-| -------------- | ---------------------------------------------- | -------------------------------------------------------------- |
-| `ROOMS_DOMAIN` | caddy, deploy.sh                               | Public domain the relay is served on, e.g. `rooms.example.com` |
-| `RELAY_KEY`    | relay, deploy.sh                               | Shared secret laptops present in `x-relay-key` to register     |
-| `RELAY_PORT`   | relay (compose sets this to `8080` internally) | Port the relay listens on inside its container                 |
-| `SSH_TARGET`   | deploy.sh                                      | `user@host` (or an `~/.ssh/config` alias) for the VPS          |
-| `REMOTE_DIR`   | deploy.sh (optional)                           | Remote checkout dir, default `~/paseo-rooms`                   |
-| `SSH_OPTS`     | deploy.sh (optional)                           | Extra ssh/rsync flags, e.g. `-i ~/.ssh/id_deploy`              |
+| Var               | Used by                                        | Meaning                                                        |
+| ----------------- | ---------------------------------------------- | -------------------------------------------------------------- |
+| `ROOMS_DOMAIN`    | caddy, deploy.sh                               | Public domain the relay is served on, e.g. `rooms.example.com` |
+| `RELAY_AUTH_MODE` | relay, deploy.sh                               | `open` or `key`; Compose and deploy.sh default to `key`        |
+| `RELAY_KEY`       | relay, deploy.sh                               | Required only in `key` mode                                    |
+| `RELAY_PORT`      | relay (compose sets this to `8080` internally) | Port the relay listens on inside its container                 |
+| `SSH_TARGET`      | deploy.sh                                      | `user@host` (or an `~/.ssh/config` alias) for the VPS          |
+| `REMOTE_DIR`      | deploy.sh (optional)                           | Remote checkout dir, default `~/paseo-rooms`                   |
+| `SSH_OPTS`        | deploy.sh (optional)                           | Extra ssh/rsync flags, e.g. `-i ~/.ssh/id_deploy`              |
 
 `RELAY_KEY` and `ROOMS_DOMAIN` are never baked into the Docker image — they're
 supplied at deploy time and written to a `.env` file next to `compose.yml` on
@@ -31,8 +32,8 @@ the VPS (`chmod 600`).
 ## First-time setup
 
 1. Point DNS: create an A record for `ROOMS_DOMAIN` -> the VPS IP.
-2. Pick a `RELAY_KEY` (any long random string — this is the shared secret
-   between the relay and every laptop room server).
+2. Choose `RELAY_AUTH_MODE=open` for public registration, or keep `key`
+   and supply a long random `RELAY_KEY` for a private relay.
 3. From your machine (or CI — see below), deploy:
 
    ```bash
@@ -68,7 +69,7 @@ keeps this running in the background.
 ## Continuous deploy (GitLab CI)
 
 `.gitlab-ci.yml` type-checks and runs relay protocol tests on every push. On
-`main`, it deploys the LAN relay using the project runner tagged
+`main`, it deploys the relay using the project runner tagged
 `paseo-rooms`. Configure these GitLab **Settings -> CI/CD -> Variables**:
 
 - `DEPLOY_SSH_PRIVATE_KEY` — dedicated deploy key, preferably a _File_ type
@@ -77,22 +78,26 @@ keeps this running in the background.
   _File_ type variable (obtain with `ssh-keyscan -H <host>` from a trusted
   network).
 - `DEPLOY_SSH_TARGET` — e.g. `deployer@192.168.193.100`.
-- `RELAY_KEY` — the shared relay secret, masked.
+- `RELAY_AUTH_MODE` — optional override (`open` or `key`). The hosted
+  `paseo-rooms.pyratzlabs.fr` relay defaults to `open`; other domains and LAN
+  deployments default to `key`.
+- `RELAY_KEY` — the shared relay secret, masked; required only in `key` mode.
 - `DEPLOY_REMOTE_DIR` — optional; defaults to `/home/deployer/paseo-rooms`.
 
 The deploy job is omitted until all required variables are present. It updates
 the same directory as the running relay, keeps `.env` out of rsync deletion,
-rebuilds the LAN compose stack, and confirms that the local relay responds.
+rebuilds the chosen compose stack, and confirms that discovery reports the
+expected registration mode.
 
-The current host already uses nginx-proxy on ports 80/443. The CI deployment
-therefore intentionally uses `compose.lan.yml` and port 8080; do not set
-`ROOMS_DOMAIN` or run the Caddy compose stack on that host unless the proxy
-setup is migrated first.
+The current host uses nginx-proxy on ports 80/443. With `ROOMS_DOMAIN` set,
+CI uses `compose.proxy.yml` and joins its `web` network. Without a domain it
+uses `compose.lan.yml`. Do not run the Caddy stack on the existing proxy host.
 
 ## Health check
 
-The relay has no `/healthz` endpoint. `deploy.sh` and the workflow use the
-public root as the liveness check.
+The relay has no `/healthz` endpoint. CI checks
+`/.well-known/paseo-rooms` and the expected registration mode; `deploy.sh`
+checks the public root for liveness.
 
 ## Public and private registration
 
@@ -108,8 +113,10 @@ RELAY_AUTH_MODE=open RELAY_PORT=8787 npm run relay
 
 Select `ws://127.0.0.1:8787` under the plugin's Advanced settings. Public
 connections send no registration key. Internet deployments must terminate TLS
-and use a `wss://` origin. Existing Compose and CI deployment paths stay private;
-this change does not switch the hosted deployment to public registration.
+and use a `wss://` origin. To deploy an open relay with any Compose file, set
+`RELAY_AUTH_MODE=open` in its `.env`; no `RELAY_KEY` is required. Compose and
+`deploy.sh` retain the private default. CI explicitly selects open mode for
+the hosted Pyratz Labs domain, so later deployments preserve keyless access.
 
 New room routes carry an independent ownership proof, so knowledge of a room
 address does not permit registering it after its host disconnects or the relay

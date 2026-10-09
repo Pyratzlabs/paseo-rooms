@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const config = await readFile(
   new URL("../../../.gitlab-ci.yml", import.meta.url),
@@ -44,7 +48,10 @@ test("the deploy reconciles the live deployment and verifies it", () => {
     /needs:[\s\S]*?job: plugin-verify\n      artifacts: false/,
   );
   assert.match(config, /for attempt in \\?\$\(seq 1 15\)/);
-  assert.match(config, /curl -sS http:\/\/127\.0\.0\.1:8080\//);
+  assert.match(
+    config,
+    /curl -fsS http:\/\/127\.0\.0\.1:8080\/\.well-known\/paseo-rooms/,
+  );
 });
 
 test("SSH host identity is pinned through a CI variable", () => {
@@ -164,5 +171,95 @@ test("verification jobs run for merge request pipelines", () => {
       ),
       `${job} must run in an MR pipeline`,
     );
+  }
+});
+
+test("CI selects and persists public or private registration before deploying", () => {
+  const block = config.match(
+    /^deploy:[\s\S]*?^  script:\n    - \|\n([\s\S]*?)^  rules:/m,
+  )?.[1];
+  assert.ok(block, "deployment script must be present");
+  const script = block.replace(/^      /gm, "");
+  const directory = mkdtempSync(join(tmpdir(), "rooms-deploy-policy-"));
+  const output = join(directory, "environment");
+  writeFileSync(join(directory, "rsync"), "#!/bin/sh\nexit 0\n", {
+    mode: 0o700,
+  });
+  // Capture only the generated environment from the deployment SSH command.
+  // No command reaches a remote host during this test.
+  writeFileSync(
+    join(directory, "ssh"),
+    `#!/usr/bin/env node
+const command = process.argv.at(-1);
+const payload = command.match(/^printf '%s' '([^']+)'/);
+if (payload) require('node:fs').writeFileSync(process.env.POLICY_OUTPUT, Buffer.from(payload[1], 'base64'));
+`,
+    { mode: 0o700 },
+  );
+  const cases = [
+    {
+      domain: "paseo-rooms.pyratzlabs.fr",
+      mode: "",
+      key: "",
+      expected: "open",
+    },
+    {
+      domain: "private.example.com",
+      mode: "",
+      key: "fixture-key",
+      expected: "key",
+    },
+    { domain: "", mode: "", key: "fixture-key", expected: "key" },
+    { domain: "private.example.com", mode: "open", key: "", expected: "open" },
+    {
+      domain: "paseo-rooms.pyratzlabs.fr",
+      mode: "key",
+      key: "fixture-key",
+      expected: "key",
+    },
+    {
+      domain: "private.example.com",
+      mode: "",
+      key: "",
+      error: /RELAY_KEY is required/,
+    },
+    {
+      domain: "paseo-rooms.pyratzlabs.fr",
+      mode: "invalid",
+      key: "",
+      error: /RELAY_AUTH_MODE must be/,
+    },
+  ];
+  try {
+    for (const { domain, mode, key, expected, error } of cases) {
+      rmSync(output, { force: true });
+      const result = spawnSync("sh", ["-eu", "-c", script], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          POLICY_OUTPUT: output,
+          DEPLOY_SSH_TARGET: "fixture-host",
+          DEPLOY_REMOTE_DIR: "/fixture",
+          ROOMS_DOMAIN: domain,
+          RELAY_AUTH_MODE: mode,
+          RELAY_KEY: key,
+        },
+      });
+      if (error) {
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, error);
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        const environment = readFileSync(output, "utf8");
+        assert.match(
+          environment,
+          new RegExp(`^RELAY_AUTH_MODE=${expected}$`, "m"),
+        );
+        assert.match(environment, new RegExp(`^RELAY_KEY=${key}$`, "m"));
+      }
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

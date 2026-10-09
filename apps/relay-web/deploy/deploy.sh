@@ -6,9 +6,10 @@
 # Required env:
 #   SSH_TARGET   e.g. deploy@1.2.3.4  (or an entry in ~/.ssh/config)
 #   ROOMS_DOMAIN e.g. rooms.example.com
-#   RELAY_KEY    shared secret between the relay and laptop room servers
+#   RELAY_KEY    required only when RELAY_AUTH_MODE=key
 #
 # Optional env:
+#   RELAY_AUTH_MODE open or key (default: key)
 #   SSH_OPTS       extra ssh/rsync options, e.g. "-i ~/.ssh/id_deploy"
 #   REMOTE_DIR     remote checkout dir (default: ~/paseo-rooms)
 #
@@ -28,7 +29,12 @@ fail() {
 
 [[ -n "${SSH_TARGET:-}" ]] || fail "SSH_TARGET is required (e.g. deploy@1.2.3.4)"
 [[ -n "${ROOMS_DOMAIN:-}" ]] || fail "ROOMS_DOMAIN is required (e.g. rooms.example.com)"
-[[ -n "${RELAY_KEY:-}" ]] || fail "RELAY_KEY is required (shared secret for the relay)"
+RELAY_AUTH_MODE="${RELAY_AUTH_MODE:-key}"
+case "$RELAY_AUTH_MODE" in
+  open) ;;
+  key) [[ -n "${RELAY_KEY:-}" ]] || fail "RELAY_KEY is required in key mode" ;;
+  *) fail "RELAY_AUTH_MODE must be open or key" ;;
+esac
 
 REMOTE_DIR="${REMOTE_DIR:-~/paseo-rooms}"
 SSH_OPTS="${SSH_OPTS:-}"
@@ -61,7 +67,8 @@ rsync -az --delete -e "ssh $SSH_OPTS" \
 echo "==> Writing remote .env"
 # shellcheck disable=SC2086
 ssh $SSH_OPTS "$SSH_TARGET" "cat > '$REMOTE_DIR/deploy/.env'" <<EOF
-RELAY_KEY=$RELAY_KEY
+RELAY_AUTH_MODE=$RELAY_AUTH_MODE
+RELAY_KEY=${RELAY_KEY:-}
 ROOMS_DOMAIN=$ROOMS_DOMAIN
 EOF
 # shellcheck disable=SC2086

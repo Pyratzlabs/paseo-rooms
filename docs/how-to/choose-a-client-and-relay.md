@@ -22,7 +22,7 @@ links, the relay selected when they were created.
 | Pyratz Labs relay | GitLab Pages client                | The default. The browser client is independently published at `paseo-rooms-9eb268.gitlab.io`.                                                                                      |
 | Pyratz Labs relay | Pyratz Labs client                 | Use the **Pyratz Labs** preset when you prefer the same-origin hosted client.                                                                                                      |
 | Pyratz Labs relay | Your client                        | Select **Custom client** and enter an HTTPS origin that serves a compatible Paseo Rooms client.                                                                                    |
-| Your relay        | Your client                        | The self-hosted option: select both custom endpoints and supply your relay's host registration key.                                                                                |
+| Your relay        | Your client                        | The self-hosted option: select both custom endpoints and supply a host registration key only if your relay requires one.                                                           |
 | Your relay        | GitLab Pages or Pyratz Labs client | Useful when you want to operate routing infrastructure while continuing to use one of the published clients. The client asks for confirmation before connecting to a custom relay. |
 
 All public combinations require HTTPS for the client and WSS for the relay.
@@ -37,8 +37,9 @@ For development on one laptop only, HTTP and WS are accepted for `localhost`,
    `https://rooms.example.com`.
 3. Under **Relay for new links**, keep the Pyratz Labs default or enter your
    relay origin, for example `wss://relay.example.com`.
-4. When selecting a custom relay, enter its host registration key. This key is
-   sent only from the trusted Paseo plugin to the local room server; it is not
+4. Keep **Automatic discovery** selected. The hosted Pyratz Labs relay needs
+   no key. If a private relay requires one, enter the key supplied by its
+   operator. The key stays between the local room server and relay; it is not
    placed in the invite URL or exposed to the browser client.
 5. Create the link. A custom-relay invite asks the browser participant to
    confirm the relay endpoint before opening the encrypted channel.

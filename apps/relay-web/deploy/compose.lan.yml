@@ -4,6 +4,7 @@
 # use compose.yml (relay + Caddy auto-TLS) instead.
 #
 #   RELAY_KEY=... docker compose -f compose.lan.yml up -d
+# Use RELAY_AUTH_MODE=open to allow public registration without a key.
 #
 # Put a TLS reverse proxy in front of this stack before using it from a browser
 # client. Laptop side then dials: RELAY_URL=wss://<relay-domain>/host
@@ -14,7 +15,8 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.relay
     environment:
-      RELAY_KEY: ${RELAY_KEY:?RELAY_KEY is required}
+      RELAY_AUTH_MODE: ${RELAY_AUTH_MODE:-key}
+      RELAY_KEY: ${RELAY_KEY:-}
       RELAY_PORT: "8080"
     ports:
       - "8080:8080"
