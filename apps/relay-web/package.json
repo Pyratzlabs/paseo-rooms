@@ -29,7 +29,7 @@
     "test:scroll": "node --import tsx --test scripts/scroll.test.ts",
     "test:room-ui": "node --test scripts/room-ui.test.mjs",
     "test:timeline": "node --import tsx --test scripts/timeline.test.ts",
-    "test:questions": "node --import tsx --test scripts/questions.test.ts",
+    "test:questions": "node --import tsx --test scripts/questions.test.ts && node --test scripts/paseo-client.test.mjs",
     "test:public-events": "node --import tsx --test scripts/public-events.test.ts",
     "test:presence": "node --import tsx --test scripts/presence.test.ts",
     "test:ci": "node --test scripts/ci-config.test.mjs",
@@ -37,8 +37,8 @@
     "test:relay-access": "node --import tsx --test scripts/relay-access.test.ts scripts/relay-host-access.test.ts scripts/relay-policy.test.ts"
   },
   "dependencies": {
-    "@getpaseo/client": "^0.8.0",
-    "@getpaseo/relay": "0.6.1",
+    "@getpaseo/client": "0.10.3",
+    "@getpaseo/relay": "0.10.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "ws": "^8.18.0"

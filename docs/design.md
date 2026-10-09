@@ -7,7 +7,7 @@ the whole Paseo daemon.
 ## Paseo APIs used
 
 Everything is built on the official TypeScript SDK, **`@getpaseo/client`**
-(v0.4.0, same protocol the Paseo apps use), talking to the local daemon at
+(v0.10.3, same protocol the Paseo apps use), talking to the local daemon at
 `ws://127.0.0.1:6767/ws`:
 
 | Need | SDK call |
@@ -71,7 +71,7 @@ message endpoint accepts only `{ message, name }`.
 ## Security / trust boundary
 
 - **Privileged edge**: only the server process talks to the daemon (localhost;
-  supports `PASEO_PASSWORD` bearer auth if the daemon requires it).
+  supports `PASEO_PASSWORD` through the SDK's authenticated handshake if the daemon requires it).
 - **Capability tokens**: 24 random bytes, base64url (~192 bits) per room; an
   invalid token 404s every endpoint. Tokens map to exactly one agent.
 - **No client-controlled agent selection**: `agent_id` in a request body is

@@ -1,5 +1,6 @@
 import os from "node:os";
 import path from "node:path";
+import { ensureConnected } from "../relay-web/src/paseo.js";
 import {
   credentialOrigin,
   RelayCredentialStore,
@@ -92,12 +93,33 @@ export async function ensureManagedRoomServer(): Promise<ManagedRoomServer> {
   if (!managed) {
     configureLocalRuntime();
     managed = import("../relay-web/src/server.js")
-      .then(({ startLocalRoomServer }) =>
-        startLocalRoomServer({
+      .then(async ({ startLocalRoomServer }) => {
+        const server = await startLocalRoomServer({
           resolveRelayKey: (origin) =>
             new RelayCredentialStore().resolve(origin).key,
-        }),
-      )
+        });
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          // The listener opens before its background daemon connection is ready.
+          // Sharing must wait for that connection before calling the admin API.
+          await Promise.race([
+            ensureConnected(),
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(new Error("paseo-rooms: daemon connection timed out")),
+                10_000,
+              );
+            }),
+          ]);
+          return server;
+        } catch (error) {
+          await server.close();
+          throw error;
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      })
       .catch((error) => {
         managed = null;
         console.error("paseo-rooms local server failed to start", error);
