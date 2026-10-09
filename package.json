@@ -41,5 +41,10 @@
     "verify": "npm run format:check && npm run lint && npm run typecheck && npm run typecheck:web && npm run test:plugin && npm run typecheck:plugin",
     "build:plugin": "npm run build --workspace @paseo-rooms/paseo-plugin",
     "test:relay-access": "npm run test:relay-access --workspace @paseo-rooms/relay-web"
+  },
+  "overrides": {
+    "mermaid": {
+      "katex": "0.18.2"
+    }
   }
 }

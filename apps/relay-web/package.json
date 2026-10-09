@@ -8,8 +8,8 @@
     "start": "npm --prefix ../docs run build && npm run build:web && tsx src/server-cli.ts",
     "build:web": "vite build --config web/vite.config.ts",
     "dev:web": "vite --config web/vite.config.ts",
-    "format": "prettier --write eslint.config.js package.json scripts/ci-config.test.mjs scripts/relay-origin.test.ts web",
-    "format:check": "prettier --check eslint.config.js package.json scripts/ci-config.test.mjs scripts/relay-origin.test.ts web",
+    "format": "prettier --write eslint.config.js package.json scripts/ci-config.test.mjs scripts/markdown.test.mjs scripts/relay-origin.test.ts web",
+    "format:check": "prettier --check eslint.config.js package.json scripts/ci-config.test.mjs scripts/markdown.test.mjs scripts/relay-origin.test.ts web",
     "lint": "eslint web eslint.config.js",
     "typecheck:web": "tsc --noEmit -p web/tsconfig.json",
     "share": "tsx scripts/share.ts",
@@ -27,7 +27,7 @@
     "test:e2ee-browser": "PASEO_E2EE_SMOKE=1 vite build --config web/vite.config.ts && node --test scripts/e2ee-browser-build.test.mjs",
     "test:name": "node --import tsx --test scripts/name.test.ts",
     "test:scroll": "node --import tsx --test scripts/scroll.test.ts",
-    "test:room-ui": "node --test scripts/room-ui.test.mjs",
+    "test:room-ui": "node --test scripts/room-ui.test.mjs scripts/markdown.test.mjs",
     "test:timeline": "node --import tsx --test scripts/timeline.test.ts",
     "test:questions": "node --import tsx --test scripts/questions.test.ts && node --test scripts/paseo-client.test.mjs",
     "test:public-events": "node --import tsx --test scripts/public-events.test.ts",
@@ -39,8 +39,12 @@
   "dependencies": {
     "@getpaseo/client": "0.10.3",
     "@getpaseo/relay": "0.10.3",
+    "dompurify": "3.4.16",
+    "mermaid": "12.1.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
     "ws": "^8.18.0"
   },
   "devDependencies": {

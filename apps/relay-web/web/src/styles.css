@@ -274,6 +274,7 @@ h1 {
   margin: 0 0 12px;
   white-space: pre-wrap;
 }
+.markdown h1,
 .markdown h2,
 .markdown h3 {
   margin: 20px 0 8px;
@@ -302,6 +303,37 @@ h1 {
   color: var(--accent);
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+.markdown pre {
+  overflow-x: auto;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.markdown pre code {
+  padding: 0;
+  white-space: pre;
+}
+.mermaid-diagram {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+}
+.mermaid-svg {
+  overflow-x: auto;
+}
+.mermaid-svg svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+.mermaid-diagram summary {
+  margin-top: 8px;
+  color: var(--text-muted);
+  cursor: pointer;
 }
 .activity {
   width: 100%;
@@ -730,4 +762,26 @@ h1 {
   .help {
     margin-left: 0;
   }
+}
+
+.markdown-table {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.markdown th,
+.markdown td {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+  min-width: 140px;
+}
+.markdown th {
+  background: var(--surface-2);
 }

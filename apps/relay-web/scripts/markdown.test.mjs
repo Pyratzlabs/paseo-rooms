@@ -13,7 +13,7 @@ const result = await build({
   write: false,
   platform: "node",
   format: "cjs",
-  packages: "external",
+  external: ["react", "react/*", "react-dom/*", "mermaid", "dompurify"],
 });
 const module = { exports: {} };
 new Function("require", "module", "exports", result.outputFiles[0].text)(
@@ -73,4 +73,12 @@ test("HTML and executable Markdown URLs never become active content", () => {
   );
   assert.doesNotMatch(html, /<script>/);
   assert.doesNotMatch(html, /href="javascript:/);
+});
+
+test("alternate Mermaid fences and numbered lists follow CommonMark", () => {
+  const html = render(
+    "3. Third\n4. Fourth\n\n~~~~mermaid\ngraph TD\nA --> B\n~~~~",
+  );
+  assert.match(html, /<ol start="3">/);
+  assert.match(html, /aria-label="Mermaid diagram"/);
 });
