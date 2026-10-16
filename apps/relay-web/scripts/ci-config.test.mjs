@@ -21,6 +21,21 @@ const deployScript = await readFile(
   new URL("../deploy/deploy.sh", import.meta.url),
   "utf8",
 );
+const proxyCompose = await readFile(
+  new URL("../deploy/compose.proxy.yml", import.meta.url),
+  "utf8",
+);
+
+test("proxy deployment restricts its raw HTTP health-check port to loopback", () => {
+  const ports = proxyCompose.match(/^    ports:\n((?:      .*\n)+)/m)?.[1];
+  assert.ok(ports, "the CI health check requires a local published port");
+  const bindings = [...ports.matchAll(/^      - "([^"]+)"$/gm)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(bindings, ["127.0.0.1:8080:8080"]);
+  assert.match(proxyCompose, /networks:\n      - web/);
+  assert.match(proxyCompose, /VIRTUAL_PORT: "8080"/);
+});
 
 test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
   const jobs = ["quality", "tests", "plugin-verify", "deploy", "pages"];
