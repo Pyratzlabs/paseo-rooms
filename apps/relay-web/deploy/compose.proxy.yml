@@ -7,7 +7,8 @@
 #
 # Laptop side then dials: RELAY_URL=wss://$ROOMS_DOMAIN/host
 # Private relays use RELAY_AUTH_MODE=key and supply RELAY_KEY.
-# The :8080 port stays published so existing LAN/ZeroTier links keep working.
+# Publish :8080 on loopback only for local health checks; public access uses TLS.
+# Direct LAN/ZeroTier access belongs in the separate compose.lan.yml stack.
 services:
   relay:
     build:
@@ -21,7 +22,7 @@ services:
       VIRTUAL_PORT: "8080"
       LETSENCRYPT_HOST: ${ROOMS_DOMAIN}
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     networks:
       - web
     restart: unless-stopped

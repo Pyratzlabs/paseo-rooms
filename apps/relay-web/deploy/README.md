@@ -104,6 +104,11 @@ expected registration mode.
 The current host uses nginx-proxy on ports 80/443. With `ROOMS_DOMAIN` set,
 CI uses `compose.proxy.yml` and joins its `web` network. Without a domain it
 uses `compose.lan.yml`. Do not run the Caddy stack on the existing proxy host.
+The proxy stack binds its raw HTTP port to `127.0.0.1:8080` for local health
+checks. Public clients must use HTTPS/WSS through nginx-proxy; direct
+LAN/ZeroTier links to the host's port 8080 are unavailable with this stack.
+Use the separate `compose.lan.yml` setup when direct private-network access
+is required.
 
 ## Health check
 
