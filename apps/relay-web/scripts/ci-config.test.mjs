@@ -306,6 +306,78 @@ test("CI schedules only deployments with complete registration and SSH settings"
   );
 });
 
+test("CI remote verification requires a complete successful discovery response", () => {
+  const block = config.match(
+    /^deploy:[\s\S]*?^  script:\n    - \|\n([\s\S]*?)^  rules:/m,
+  )?.[1];
+  assert.ok(block);
+  // Capture the actual expanded SSH command, then execute only its verification
+  // loop with local curl/sleep/docker fixtures. No SSH or deployment is run.
+  const capture = spawnSync(
+    "sh",
+    [
+      "-eu",
+      "-c",
+      `
+ssh() { case "$2" in "printf '%s' "*) printf '%s' "$2" ;; esac; }
+rsync() { :; }
+${block.replace(/^      /gm, "")}`,
+    ],
+    {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        DEPLOY_SSH_TARGET: "fixture-host",
+        DEPLOY_REMOTE_DIR: "/fixture",
+        ROOMS_DOMAIN: "fixture.invalid",
+        RELAY_AUTH_MODE: "open",
+        RELAY_KEY: "",
+      },
+    },
+  );
+  assert.equal(capture.status, 0, capture.stderr);
+  const loop = capture.stdout.match(/ && (for attempt in [\s\S]+)$/)?.[1];
+  assert.ok(loop, "remote deployment must verify discovery");
+  const cases = [
+    { body: '{"registration":"open"}', status: 18, success: false },
+    { body: '{"registration":"open"', status: 0, success: false },
+    { body: '{"registration":"key"}', status: 0, success: false },
+    { body: "not JSON", status: 0, success: false },
+    { body: '{"registration":"open"}', status: 0, success: true },
+    { body: '{ "registration": "open" }', status: 0, success: true },
+  ];
+  for (const { body, status, success } of cases) {
+    const result = spawnSync(
+      "sh",
+      [
+        "-c",
+        `
+curl() { printf '%s' "$DISCOVERY_FIXTURE"; return "$CURL_STATUS"; }
+sleep() { :; }
+docker() {
+  # compose --env-file .env -f <file> exec -T relay <command...>
+  shift 8
+  "$@"
+}
+${loop}`,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DISCOVERY_FIXTURE: body,
+          CURL_STATUS: String(status),
+        },
+      },
+    );
+    assert.equal(
+      result.status === 0,
+      success,
+      `curl=${status}, body=${body}: ${result.stderr}`,
+    );
+  }
+});
+
 test("CI selects and persists public or private registration before deploying", () => {
   const block = config.match(
     /^deploy:[\s\S]*?^  script:\n    - \|\n([\s\S]*?)^  rules:/m,
