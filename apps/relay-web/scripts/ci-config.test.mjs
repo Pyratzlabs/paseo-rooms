@@ -226,6 +226,7 @@ ${verification}`;
         CURL_STATUS: String(curlStatus),
       },
     });
+    assert.ifError(result.error);
     assert.equal(result.status === 0, success, result.stderr);
     if (success) {
       assert.match(result.stdout, /Deploy complete/);
