@@ -47,6 +47,9 @@ tests:
   image: node:22-alpine
   tags:
     - paseo-rooms
+  before_script:
+    # The deployment verification fixture executes deploy.sh's Bash syntax.
+    - apk add --no-cache bash
   script:
     - npm ci --no-audit --no-fund
     - npm run build:docs
