@@ -100,6 +100,10 @@ keeps this running in the background.
 - `DEPLOY_REMOTE_DIR` — optional; defaults to `/home/deployer/paseo-rooms`.
 - `RELAY_MAX_HOSTS` and `RELAY_MAX_HOSTS_PER_SOURCE` — optional positive integer
   overrides; defaults remain `256` and `32`. Invalid values prevent relay startup.
+  CI and the manual script also reject invalid overrides before SSH, builds,
+  synchronization, environment replacement, or container changes. Decimal digits
+  only are accepted, from `1` through `9007199254740991`; scientific notation,
+  fractions, zero, and explicitly empty values are rejected.
 - `RELAY_TRUSTED_PROXY_ADDRESSES` — optional exact proxy IP override. With a domain,
   CI otherwise inspects the `nginx-proxy` container's IPv4 address on the `web`
   network. Missing discovery aborts deployment before replacing the remote `.env`.

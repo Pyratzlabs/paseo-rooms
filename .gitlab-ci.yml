@@ -118,6 +118,7 @@ deploy:
     - printf 'Host *\n  IdentitiesOnly yes\n  IdentityFile ~/.ssh/id_deploy\n' > ~/.ssh/config
   script:
     - |
+      sh apps/relay-web/deploy/validate-capacity.sh
       DEPLOY_DIR="${DEPLOY_REMOTE_DIR:-/home/deployer/paseo-rooms}"
       if [ -z "${RELAY_AUTH_MODE:-}" ]; then
         if [ "${ROOMS_DOMAIN:-}" = "paseo-rooms.pyratzlabs.fr" ]; then

@@ -361,6 +361,7 @@ ${block.replace(/^      /gm, "")}`,
     ],
     {
       encoding: "utf8",
+      cwd: new URL("../../../", import.meta.url),
       env: {
         ...process.env,
         DEPLOY_SSH_TARGET: "fixture-host",
@@ -425,13 +426,15 @@ test("CI selects and persists public or private registration before deploying", 
 ssh() {
   case "$2" in
     "docker inspect "*) printf '%s' "$PROXY_ADDRESS_FIXTURE" ;;
+    "mkdir -p "*) printf '%s' 'mkdir' > "$MUTATION_OUTPUT" ;;
     "printf '%s' "*) printf '%s' "$2" > "$POLICY_OUTPUT" ;;
   esac
 }
-rsync() { :; }
+rsync() { printf '%s' 'rsync' > "$MUTATION_OUTPUT"; }
 ${block.replace(/^      /gm, "")}`;
   const directory = mkdtempSync(join(tmpdir(), "rooms-deploy-policy-"));
   const output = join(directory, "environment");
+  const mutationOutput = join(directory, "mutations");
   const cases = [
     {
       domain: "paseo-rooms.pyratzlabs.fr",
@@ -515,11 +518,14 @@ ${block.replace(/^      /gm, "")}`;
       maxPerSource = "48",
     } of cases) {
       rmSync(output, { force: true });
+      rmSync(mutationOutput, { force: true });
       const result = spawnSync("sh", ["-eu", "-c", script], {
         encoding: "utf8",
+        cwd: new URL("../../../", import.meta.url),
         env: {
           ...process.env,
           POLICY_OUTPUT: output,
+          MUTATION_OUTPUT: mutationOutput,
           DEPLOY_SSH_TARGET: "fixture-host",
           DEPLOY_REMOTE_DIR: "/fixture",
           ROOMS_DOMAIN: domain,
@@ -535,6 +541,7 @@ ${block.replace(/^      /gm, "")}`;
         assert.notEqual(result.status, 0);
         assert.match(result.stderr, error);
         assert.throws(() => readFileSync(output), { code: "ENOENT" });
+        assert.throws(() => readFileSync(mutationOutput), { code: "ENOENT" });
       } else {
         assert.equal(result.status, 0, result.stderr);
         const command = readFileSync(output, "utf8");

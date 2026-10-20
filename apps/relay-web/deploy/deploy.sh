@@ -43,6 +43,7 @@ SSH_OPTS="${SSH_OPTS:-}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+sh "$SCRIPT_DIR/validate-capacity.sh"
 
 echo "==> Ensuring remote directory exists: $REMOTE_DIR"
 # shellcheck disable=SC2086
