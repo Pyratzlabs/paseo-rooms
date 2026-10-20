@@ -320,7 +320,7 @@ test("CI remote verification requires a complete successful discovery response",
       "-eu",
       "-c",
       `
-ssh() { case "$2" in "printf '%s' "*) printf '%s' "$2" ;; esac; }
+ssh() { case "$2" in "docker inspect "*) printf '%s' '172.18.0.3' ;; "printf '%s' "*) printf '%s' "$2" ;; esac; }
 rsync() { :; }
 ${block.replace(/^      /gm, "")}`,
     ],
@@ -389,6 +389,7 @@ test("CI selects and persists public or private registration before deploying", 
   const script = `
 ssh() {
   case "$2" in
+    "docker inspect "*) printf '%s' '172.18.0.3' ;;
     "printf '%s' "*) printf '%s' "$2" > "$POLICY_OUTPUT" ;;
   esac
 }
@@ -443,6 +444,9 @@ ${block.replace(/^      /gm, "")}`;
           ROOMS_DOMAIN: domain,
           RELAY_AUTH_MODE: mode,
           RELAY_KEY: key,
+          RELAY_TRUSTED_PROXY_ADDRESSES: "",
+          RELAY_MAX_HOSTS: "512",
+          RELAY_MAX_HOSTS_PER_SOURCE: "48",
         },
       });
       if (error) {
@@ -459,6 +463,15 @@ ${block.replace(/^      /gm, "")}`;
           new RegExp(`^RELAY_AUTH_MODE=${expected}$`, "m"),
         );
         assert.match(environment, new RegExp(`^RELAY_KEY=${key}$`, "m"));
+        assert.match(environment, /^RELAY_MAX_HOSTS=512$/m);
+        assert.match(environment, /^RELAY_MAX_HOSTS_PER_SOURCE=48$/m);
+        assert.match(
+          environment,
+          new RegExp(
+            `^RELAY_TRUSTED_PROXY_ADDRESSES=${domain ? "172\\.18\\.0\\.3" : ""}$`,
+            "m",
+          ),
+        );
       }
     }
   } finally {
