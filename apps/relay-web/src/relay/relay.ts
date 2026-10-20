@@ -38,7 +38,7 @@ export interface RelayOptions {
   relayKey?: string;
   authMode?: "open" | "key";
   limits?: Partial<RelayLimits>;
-  /** Exact immediate proxy IPs; these peers must overwrite X-Forwarded-For. */
+  /** Exact immediate proxy IPs; peers must append or overwrite the actual source. */
   trustedProxyAddresses?: string[];
   admissionEnabled?: boolean;
   /** Ping cadence; connections die after 2 missed pongs. */
@@ -88,6 +88,44 @@ const DEFAULT_LIMITS: RelayLimits = {
   maxSources: 4096,
   browserIdleMs: 5 * 60_000,
 };
+
+export function hostLimitsFromEnvironment(
+  environment: Record<string, string | undefined>,
+): Pick<RelayLimits, "maxHosts" | "maxHostsPerSource"> {
+  function read(name: string, fallback: number): number {
+    const value = environment[name];
+    if (value === undefined) return fallback;
+    const number = Number(value);
+    if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(number) || number <= 0)
+      throw new Error(`invalid ${name}: expected a positive safe integer`);
+    return number;
+  }
+  return {
+    maxHosts: read("RELAY_MAX_HOSTS", DEFAULT_LIMITS.maxHosts),
+    maxHostsPerSource: read(
+      "RELAY_MAX_HOSTS_PER_SOURCE",
+      DEFAULT_LIMITS.maxHostsPerSource,
+    ),
+  };
+}
+
+function canonicalAddress(address: string): string | undefined {
+  if (isIP(address) === 4) return address;
+  if (isIP(address) !== 6 || address.includes("%")) return undefined;
+  // URL parsing normalizes equivalent IPv6 spellings. Collapse IPv4-mapped
+  // addresses so Docker's IPv4 peers match Node's dual-stack socket addresses.
+  const normalized = new URL(`http://[${address}]/`).hostname.slice(1, -1);
+  if (normalized.startsWith("::ffff:")) {
+    const words = normalized
+      .slice(7)
+      .split(":")
+      .map((word) => parseInt(word, 16));
+    return [words[0] >> 8, words[0] & 255, words[1] >> 8, words[1] & 255].join(
+      ".",
+    );
+  }
+  return normalized;
+}
 
 export interface Relay {
   /** Actual bound port (resolved even when `port: 0` was requested). */
@@ -276,8 +314,10 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
     if (!Number.isSafeInteger(value) || value <= 0)
       throw new Error(`invalid relay limit: ${name}`);
   }
-  const trustedProxies = new Set(options.trustedProxyAddresses ?? []);
-  if ([...trustedProxies].some((address) => !isIP(address)))
+  const trustedProxies = new Set(
+    (options.trustedProxyAddresses ?? []).map(canonicalAddress),
+  );
+  if (trustedProxies.has(undefined))
     throw new Error("invalid trusted proxy address");
   interface Source {
     since: number;
@@ -297,13 +337,12 @@ export function createRelay(options: RelayOptions): Promise<Relay> {
   let browserCount = 0;
   let globalTraffic = { since: Date.now(), bytes: 0 };
   function sourceFor(req: http.IncomingMessage): string {
-    const peer = req.socket.remoteAddress ?? "unknown";
+    const peer = canonicalAddress(req.socket.remoteAddress ?? "") ?? "unknown";
     const forwarded = req.headers["x-forwarded-for"];
-    return trustedProxies.has(peer) &&
-      typeof forwarded === "string" &&
-      isIP(forwarded.trim())
-      ? forwarded.trim()
-      : peer;
+    if (!trustedProxies.has(peer) || typeof forwarded !== "string") return peer;
+    // Only the rightmost hop is vouched for by our immediate proxy. Never
+    // traverse or trust client-supplied prefixes, even if they look like IPs.
+    return canonicalAddress(forwarded.split(",").at(-1)!.trim()) ?? peer;
   }
   function admitAttempt(req: http.IncomingMessage): Source | undefined {
     if (options.admissionEnabled === false) return undefined;
@@ -1023,6 +1062,7 @@ if (isEntry) {
     port,
     relayKey,
     authMode: authMode as "open" | "key",
+    limits: hostLimitsFromEnvironment(process.env),
     admissionEnabled: process.env.RELAY_ADMISSION_ENABLED !== "false",
     trustedProxyAddresses: process.env.RELAY_TRUSTED_PROXY_ADDRESSES?.split(",")
       .map((value) => value.trim())

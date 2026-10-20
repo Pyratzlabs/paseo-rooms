@@ -133,11 +133,14 @@ deploy:
       esac
       if [ -n "${ROOMS_DOMAIN:-}" ]; then
         COMPOSE_FILE="compose.proxy.yml"
-        RELAY_ENV_B64="$(printf 'RELAY_AUTH_MODE=%s\nRELAY_KEY=%s\nROOMS_DOMAIN=%s\n' "$RELAY_AUTH_MODE" "${RELAY_KEY:-}" "$ROOMS_DOMAIN" | base64 | tr -d '\n')"
+        if [ -z "${RELAY_TRUSTED_PROXY_ADDRESSES:-}" ]; then
+          RELAY_TRUSTED_PROXY_ADDRESSES="$(ssh "$DEPLOY_SSH_TARGET" "docker inspect --format '{{with index .NetworkSettings.Networks \"web\"}}{{.IPAddress}}{{end}}' nginx-proxy")"
+          test -n "$RELAY_TRUSTED_PROXY_ADDRESSES" || { echo "Cannot identify nginx-proxy on the web network; configure RELAY_TRUSTED_PROXY_ADDRESSES" >&2; exit 1; }
+        fi
       else
         COMPOSE_FILE="compose.lan.yml"
-        RELAY_ENV_B64="$(printf 'RELAY_AUTH_MODE=%s\nRELAY_KEY=%s\n' "$RELAY_AUTH_MODE" "${RELAY_KEY:-}" | base64 | tr -d '\n')"
       fi
+      RELAY_ENV_B64="$(printf 'RELAY_AUTH_MODE=%s\nRELAY_KEY=%s\nROOMS_DOMAIN=%s\nRELAY_TRUSTED_PROXY_ADDRESSES=%s\nRELAY_MAX_HOSTS=%s\nRELAY_MAX_HOSTS_PER_SOURCE=%s\n' "$RELAY_AUTH_MODE" "${RELAY_KEY:-}" "${ROOMS_DOMAIN:-}" "${RELAY_TRUSTED_PROXY_ADDRESSES:-}" "${RELAY_MAX_HOSTS:-256}" "${RELAY_MAX_HOSTS_PER_SOURCE:-32}" | base64 | tr -d '\n')"
       ssh "$DEPLOY_SSH_TARGET" "mkdir -p '$DEPLOY_DIR/apps/relay-web/deploy' '$DEPLOY_DIR/apps/relay-web/src/relay' '$DEPLOY_DIR/apps/relay-web/public'"
       rsync -az --delete --exclude .env apps/relay-web/deploy/ apps/relay-web/src/relay/ apps/relay-web/public/ --relative \
         "$DEPLOY_SSH_TARGET":"$DEPLOY_DIR/"

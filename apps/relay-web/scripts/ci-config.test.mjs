@@ -389,7 +389,7 @@ test("CI selects and persists public or private registration before deploying", 
   const script = `
 ssh() {
   case "$2" in
-    "docker inspect "*) printf '%s' '172.18.0.3' ;;
+    "docker inspect "*) printf '%s' "$PROXY_ADDRESS_FIXTURE" ;;
     "printf '%s' "*) printf '%s' "$2" > "$POLICY_OUTPUT" ;;
   esac
 }
@@ -413,6 +413,21 @@ ${block.replace(/^      /gm, "")}`;
     { domain: "", mode: "", key: "fixture-key", expected: "key" },
     { domain: "private.example.com", mode: "open", key: "", expected: "open" },
     {
+      domain: "private.example.com",
+      mode: "open",
+      key: "",
+      proxy: "",
+      error: /Cannot identify nginx-proxy/,
+    },
+    {
+      domain: "private.example.com",
+      mode: "open",
+      key: "",
+      expected: "open",
+      proxy: "",
+      trusted: "192.0.2.10",
+    },
+    {
       domain: "paseo-rooms.pyratzlabs.fr",
       mode: "key",
       key: "fixture-key",
@@ -432,7 +447,15 @@ ${block.replace(/^      /gm, "")}`;
     },
   ];
   try {
-    for (const { domain, mode, key, expected, error } of cases) {
+    for (const {
+      domain,
+      mode,
+      key,
+      expected,
+      error,
+      proxy = "172.18.0.3",
+      trusted = "",
+    } of cases) {
       rmSync(output, { force: true });
       const result = spawnSync("sh", ["-eu", "-c", script], {
         encoding: "utf8",
@@ -444,7 +467,8 @@ ${block.replace(/^      /gm, "")}`;
           ROOMS_DOMAIN: domain,
           RELAY_AUTH_MODE: mode,
           RELAY_KEY: key,
-          RELAY_TRUSTED_PROXY_ADDRESSES: "",
+          RELAY_TRUSTED_PROXY_ADDRESSES: trusted,
+          PROXY_ADDRESS_FIXTURE: proxy,
           RELAY_MAX_HOSTS: "512",
           RELAY_MAX_HOSTS_PER_SOURCE: "48",
         },
@@ -452,6 +476,7 @@ ${block.replace(/^      /gm, "")}`;
       if (error) {
         assert.notEqual(result.status, 0);
         assert.match(result.stderr, error);
+        assert.throws(() => readFileSync(output), { code: "ENOENT" });
       } else {
         assert.equal(result.status, 0, result.stderr);
         const command = readFileSync(output, "utf8");
@@ -465,12 +490,12 @@ ${block.replace(/^      /gm, "")}`;
         assert.match(environment, new RegExp(`^RELAY_KEY=${key}$`, "m"));
         assert.match(environment, /^RELAY_MAX_HOSTS=512$/m);
         assert.match(environment, /^RELAY_MAX_HOSTS_PER_SOURCE=48$/m);
-        assert.match(
-          environment,
-          new RegExp(
-            `^RELAY_TRUSTED_PROXY_ADDRESSES=${domain ? "172\\.18\\.0\\.3" : ""}$`,
-            "m",
-          ),
+        assert.ok(
+          environment
+            .split("\n")
+            .includes(
+              `RELAY_TRUSTED_PROXY_ADDRESSES=${trusted || (domain ? proxy : "")}`,
+            ),
         );
       }
     }

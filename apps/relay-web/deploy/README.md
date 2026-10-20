@@ -15,15 +15,18 @@ the relay never sees daemon credentials.
 
 ## Env vars
 
-| Var               | Used by                                        | Meaning                                                        |
-| ----------------- | ---------------------------------------------- | -------------------------------------------------------------- |
-| `ROOMS_DOMAIN`    | caddy, deploy.sh                               | Public domain the relay is served on, e.g. `rooms.example.com` |
-| `RELAY_AUTH_MODE` | relay, deploy.sh                               | `open` or `key`; Compose and deploy.sh default to `key`        |
-| `RELAY_KEY`       | relay, deploy.sh                               | Required only in `key` mode                                    |
-| `RELAY_PORT`      | relay (compose sets this to `8080` internally) | Port the relay listens on inside its container                 |
-| `SSH_TARGET`      | deploy.sh                                      | `user@host` (or an `~/.ssh/config` alias) for the VPS          |
-| `REMOTE_DIR`      | deploy.sh (optional)                           | Remote checkout dir, default `~/paseo-rooms`                   |
-| `SSH_OPTS`        | deploy.sh (optional)                           | Extra ssh/rsync flags, e.g. `-i ~/.ssh/id_deploy`              |
+| Var                             | Used by                                        | Meaning                                                                      |
+| ------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------- |
+| `ROOMS_DOMAIN`                  | caddy, deploy.sh                               | Public domain the relay is served on, e.g. `rooms.example.com`               |
+| `RELAY_AUTH_MODE`               | relay, deploy.sh                               | `open` or `key`; Compose and deploy.sh default to `key`                      |
+| `RELAY_KEY`                     | relay, deploy.sh                               | Required only in `key` mode                                                  |
+| `RELAY_PORT`                    | relay (compose sets this to `8080` internally) | Port the relay listens on inside its container                               |
+| `RELAY_MAX_HOSTS`               | relay, Compose, deploy.sh                      | Total simultaneous host connections; default `256`                           |
+| `RELAY_MAX_HOSTS_PER_SOURCE`    | relay, Compose, deploy.sh                      | Simultaneous host connections per client IP; default `32`                    |
+| `RELAY_TRUSTED_PROXY_ADDRESSES` | relay, Compose, deploy.sh                      | Comma-separated exact immediate proxy IPs; required by the nginx proxy stack |
+| `SSH_TARGET`                    | deploy.sh                                      | `user@host` (or an `~/.ssh/config` alias) for the VPS                        |
+| `REMOTE_DIR`                    | deploy.sh (optional)                           | Remote checkout dir, default `~/paseo-rooms`                                 |
+| `SSH_OPTS`                      | deploy.sh (optional)                           | Extra ssh/rsync flags, e.g. `-i ~/.ssh/id_deploy`                            |
 
 `RELAY_KEY` and `ROOMS_DOMAIN` are never baked into the Docker image — they're
 supplied at deploy time and written to a `.env` file next to `compose.yml` on
@@ -95,6 +98,11 @@ keeps this running in the background.
   deployments default to `key`.
 - `RELAY_KEY` — the shared relay secret, masked; required only in `key` mode.
 - `DEPLOY_REMOTE_DIR` — optional; defaults to `/home/deployer/paseo-rooms`.
+- `RELAY_MAX_HOSTS` and `RELAY_MAX_HOSTS_PER_SOURCE` — optional positive integer
+  overrides; defaults remain `256` and `32`. Invalid values prevent relay startup.
+- `RELAY_TRUSTED_PROXY_ADDRESSES` — optional exact proxy IP override. With a domain,
+  CI otherwise inspects the `nginx-proxy` container's IPv4 address on the `web`
+  network. Missing discovery aborts deployment before replacing the remote `.env`.
 
 The deploy job is omitted until all required variables are present. It updates
 the same directory as the running relay, keeps `.env` out of rsync deletion,
@@ -109,6 +117,20 @@ checks. Public clients must use HTTPS/WSS through nginx-proxy; direct
 LAN/ZeroTier links to the host's port 8080 are unavailable with this stack.
 Use the separate `compose.lan.yml` setup when direct private-network access
 is required.
+
+For a manual nginx-proxy deployment, supply `RELAY_TRUSTED_PROXY_ADDRESSES`
+in `.env` using the actual proxy address:
+
+```bash
+docker inspect --format '{{with index .NetworkSettings.Networks "web"}}{{.IPAddress}}{{end}}' nginx-proxy
+```
+
+Do not trust the Docker subnet or every private address. Pin the proxy's address
+in its own deployment, or redeploy the relay after recreating/moving the proxy
+so CI refreshes it. A stale address causes forwarding headers to be ignored and
+can recreate a shared source budget. Caddy deployments also need an explicit
+trusted immediate Caddy IP for per-client attribution; LAN deployments with
+direct connections do not need forwarding trust.
 
 ## Health check
 
@@ -167,12 +189,21 @@ Operator controls for the relay executable:
   revoking established rooms. Restart the relay to apply configuration changes.
 - `RELAY_TRUSTED_PROXY_ADDRESSES` is a comma-separated list of exact immediate
   proxy IP addresses as seen by the relay socket. Trusted proxies must overwrite
-  `X-Forwarded-For` with a single client IP; lists and untrusted headers are ignored.
-  Without this setting, clients behind a proxy share its per-source limits.
+  `X-Forwarded-For` with the actual client IP or append it as the rightmost entry
+  (nginx's `$proxy_add_x_forwarded_for`). Only that final entry is used; supplied
+  prefixes are never trusted. Missing/malformed final entries fall back to the
+  socket peer, and headers from untrusted peers are ignored. IPv4-mapped IPv6
+  and equivalent IPv6 spellings share the same source budget. Without proxy
+  trust, clients behind a proxy share its per-source limits. This is a single
+  immediate proxy model, not traversal through an arbitrary proxy chain.
+- `RELAY_MAX_HOSTS` and `RELAY_MAX_HOSTS_PER_SOURCE` adjust the total and per-IP
+  host budgets. The defaults remain `256` and `32`; all values must be positive
+  safe integers. A host connection may register multiple rooms, so these are
+  not share-link limits. An office/VPN public IP still shares a per-source budget.
 
 Current built-in defaults include 256 hosts (32 per source), 1,024 guest sockets
 (128 per source, 64 per room), 4,096 routes (256 per host), a 2 MiB outgoing
 queue limit, and a five-minute guest idle timeout. `createRelay({ limits: ... })`
-allows validated overrides for embedding/testing; the executable currently uses
-these defaults. Hosting capacity and proxy-level denial-of-service controls
+allows validated overrides for embedding/testing; the executable exposes the
+two host budgets above. Hosting capacity and proxy-level denial-of-service controls
 must be assessed separately before general availability.

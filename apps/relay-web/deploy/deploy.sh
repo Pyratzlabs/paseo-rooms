@@ -10,6 +10,9 @@
 #
 # Optional env:
 #   RELAY_AUTH_MODE open or key (default: key)
+#   RELAY_MAX_HOSTS total host budget (default: 256)
+#   RELAY_MAX_HOSTS_PER_SOURCE host budget per source IP (default: 32)
+#   RELAY_TRUSTED_PROXY_ADDRESSES exact immediate proxy IPs, comma-separated
 #   SSH_OPTS       extra ssh/rsync options, e.g. "-i ~/.ssh/id_deploy"
 #   REMOTE_DIR     remote checkout dir (default: ~/paseo-rooms)
 #
@@ -69,6 +72,9 @@ ssh $SSH_OPTS "$SSH_TARGET" "cat > '$REMOTE_DIR/deploy/.env'" <<EOF
 RELAY_AUTH_MODE=$RELAY_AUTH_MODE
 RELAY_KEY=${RELAY_KEY:-}
 ROOMS_DOMAIN=$ROOMS_DOMAIN
+RELAY_MAX_HOSTS=${RELAY_MAX_HOSTS:-256}
+RELAY_MAX_HOSTS_PER_SOURCE=${RELAY_MAX_HOSTS_PER_SOURCE:-32}
+RELAY_TRUSTED_PROXY_ADDRESSES=${RELAY_TRUSTED_PROXY_ADDRESSES:-}
 EOF
 # shellcheck disable=SC2086
 ssh $SSH_OPTS "$SSH_TARGET" "chmod 600 '$REMOTE_DIR/deploy/.env'"

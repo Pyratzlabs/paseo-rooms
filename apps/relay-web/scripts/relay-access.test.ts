@@ -57,6 +57,11 @@ test("configuration fails closed and ownership secrets are canonical", () => {
     () => createRelay({ authMode: "open", limits: { maxHosts: 0 } }),
     /limit/,
   );
+  assert.throws(
+    () =>
+      createRelay({ authMode: "open", trustedProxyAddresses: ["127.0.0.0/8"] }),
+    /trusted proxy address/,
+  );
   assert.equal(routeTokenForSecret("x"), null);
   const ownership = createRouteOwnership();
   assert.equal(ownership.token.length, 45);
@@ -310,6 +315,12 @@ test("only configured immediate proxies can supply a forwarded source", async ()
     await host(relay, undefined, "192.0.2.1");
     await host(relay, undefined, "192.0.2.2");
     assert.equal(await rejected(relay, undefined, "192.0.2.1"), 503);
+    await host(relay, undefined, "2001:db8::1");
+    assert.equal(await rejected(relay, undefined, "::ffff:192.0.2.1"), 503);
+    assert.equal(
+      await rejected(relay, undefined, "2001:0db8:0:0:0:0:0:1"),
+      503,
+    );
     await host(relay, undefined, "192.0.2.3, invalid");
     assert.equal(await rejected(relay), 503);
   } finally {
