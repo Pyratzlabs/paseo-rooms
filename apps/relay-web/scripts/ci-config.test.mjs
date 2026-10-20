@@ -307,6 +307,41 @@ test("CI schedules only deployments with complete registration and SSH settings"
   );
 });
 
+test("manual deploy rejects invalid capacity before any remote command", () => {
+  for (const name of ["RELAY_MAX_HOSTS", "RELAY_MAX_HOSTS_PER_SOURCE"]) {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+ssh() { echo 'unexpected remote command' >&2; exit 99; }
+rsync() { echo 'unexpected sync' >&2; exit 99; }
+npm() { echo 'unexpected build' >&2; exit 99; }
+source "$DEPLOY_SCRIPT"
+`,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DEPLOY_SCRIPT: new URL("../deploy/deploy.sh", import.meta.url)
+            .pathname,
+          SSH_TARGET: "fixture-host",
+          ROOMS_DOMAIN: "fixture.invalid",
+          RELAY_AUTH_MODE: "open",
+          RELAY_MAX_HOSTS: "256",
+          RELAY_MAX_HOSTS_PER_SOURCE: "32",
+          [name]: "0",
+        },
+      },
+    );
+    assert.ifError(result.error);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, new RegExp(name));
+    assert.doesNotMatch(result.stderr, /unexpected/);
+  }
+});
+
 test("CI remote verification requires a complete successful discovery response", () => {
   const block = config.match(
     /^deploy:[\s\S]*?^  script:\n    - \|\n([\s\S]*?)^  rules:/m,
@@ -428,6 +463,27 @@ ${block.replace(/^      /gm, "")}`;
       trusted: "192.0.2.10",
     },
     {
+      domain: "fixture.invalid",
+      mode: "open",
+      key: "",
+      maxHosts: "0",
+      error: /RELAY_MAX_HOSTS/,
+    },
+    {
+      domain: "fixture.invalid",
+      mode: "open",
+      key: "",
+      maxHosts: "1e3",
+      error: /RELAY_MAX_HOSTS/,
+    },
+    {
+      domain: "fixture.invalid",
+      mode: "open",
+      key: "",
+      maxPerSource: "0",
+      error: /RELAY_MAX_HOSTS_PER_SOURCE/,
+    },
+    {
       domain: "paseo-rooms.pyratzlabs.fr",
       mode: "key",
       key: "fixture-key",
@@ -455,6 +511,8 @@ ${block.replace(/^      /gm, "")}`;
       error,
       proxy = "172.18.0.3",
       trusted = "",
+      maxHosts = "512",
+      maxPerSource = "48",
     } of cases) {
       rmSync(output, { force: true });
       const result = spawnSync("sh", ["-eu", "-c", script], {
@@ -469,8 +527,8 @@ ${block.replace(/^      /gm, "")}`;
           RELAY_KEY: key,
           RELAY_TRUSTED_PROXY_ADDRESSES: trusted,
           PROXY_ADDRESS_FIXTURE: proxy,
-          RELAY_MAX_HOSTS: "512",
-          RELAY_MAX_HOSTS_PER_SOURCE: "48",
+          RELAY_MAX_HOSTS: maxHosts,
+          RELAY_MAX_HOSTS_PER_SOURCE: maxPerSource,
         },
       });
       if (error) {

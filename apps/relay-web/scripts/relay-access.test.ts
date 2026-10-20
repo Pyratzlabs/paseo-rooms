@@ -4,6 +4,8 @@ import { test } from "node:test";
 import { WebSocket } from "ws";
 import { createRelay, type Relay } from "../src/relay/relay.js";
 import * as relayRuntime from "../src/relay/relay.js";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import {
   createRouteOwnership,
   routeTokenForSecret,
@@ -268,6 +270,55 @@ test("host limits from environment retain defaults and reject invalid values", (
         () => relayRuntime.hostLimitsFromEnvironment({ [name]: value }),
         new RegExp(name),
       );
+    }
+  }
+});
+
+test("deployment capacity preflight agrees with the runtime parser", () => {
+  const validator = fileURLToPath(
+    new URL("../deploy/validate-capacity.sh", import.meta.url),
+  );
+  for (const name of ["RELAY_MAX_HOSTS", "RELAY_MAX_HOSTS_PER_SOURCE"]) {
+    for (const value of [
+      "1",
+      "32",
+      "00032",
+      "9007199254740991",
+      "",
+      "0",
+      "-1",
+      "1.5",
+      "1e3",
+      "NaN",
+      "Infinity",
+      "9007199254740992",
+      "9007199254740993",
+      "1\n2",
+      " 32",
+      "32 ",
+    ]) {
+      const limits = {
+        RELAY_MAX_HOSTS: "256",
+        RELAY_MAX_HOSTS_PER_SOURCE: "32",
+        [name]: value,
+      };
+      let valid = true;
+      try {
+        relayRuntime.hostLimitsFromEnvironment(limits);
+      } catch {
+        valid = false;
+      }
+      const result = spawnSync("sh", [validator], {
+        encoding: "utf8",
+        env: { ...process.env, ...limits },
+      });
+      assert.ifError(result.error);
+      assert.equal(
+        result.status === 0,
+        valid,
+        `${name}=${JSON.stringify(value)}: ${result.stderr}`,
+      );
+      if (!valid) assert.match(result.stderr, new RegExp(name));
     }
   }
 });
