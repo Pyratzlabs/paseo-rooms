@@ -50,6 +50,17 @@ The URL is a bearer invitation, not a real-world identity. A display name is a
 session label only. The host makes all authorisation decisions from its live
 room state, the explicit v2 action allowlist, and authoritative Paseo state.
 
+### Relay registration policy
+
+Hosts discover registration policy at `GET /.well-known/paseo-rooms`.
+An `open` relay accepts protected v2 route registration without `RELAY_KEY`;
+a private `key` relay requires the operator's key on the host connection.
+Legacy v1 routes are supported only in key mode. The registration key controls
+who may register rooms; it is separate from the invitation secret, transport
+keys, and route ownership proof. Open registration does not grant access to
+another host's room. See [relay access design](design/relay-host-enrollment.md)
+and [Run your own relay](how-to/run-your-own-relay.md).
+
 ## 3. Cryptographic profile
 
 V2.0 uses the published `@getpaseo/relay/e2ee` encrypted channel, pinned as a

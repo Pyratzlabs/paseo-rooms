@@ -1,6 +1,7 @@
 # Example systemd USER unit for the laptop room server (NOT deployed to the
 # VPS — the room server and Paseo daemon stay on developers' laptops; see
-# docs/plan.md). Runs `npm start` in a local checkout with RELAY_URL/RELAY_KEY
+# docs/how-to/run-your-own-relay.md). Runs `npm start` in a local checkout with
+# RELAY_URL and, only for a private relay, RELAY_KEY
 # supplied via an EnvironmentFile, so the room server dials out to the relay
 # instead of (or in addition to) listening locally.
 #
@@ -8,8 +9,12 @@
 #   mkdir -p ~/.config/systemd/user
 #   cp deploy/paseo-rooms.service ~/.config/systemd/user/
 #   # edit WorkingDirectory below to your checkout path
-#   printf 'RELAY_URL=wss://rooms.example.com/host\nRELAY_KEY=<shared secret>\n' \
+#   # Open relay: no registration key is needed.
+#   printf 'RELAY_URL=wss://rooms.example.com/host\n' \
 #     > ~/.config/paseo-rooms.env
+#   # Private relay only: append the operator's key before starting the unit.
+#   # printf 'RELAY_KEY=%s\n' 'replace-with-the-private-relay-key' \
+#   #   >> ~/.config/paseo-rooms.env
 #   chmod 600 ~/.config/paseo-rooms.env
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now paseo-rooms.service

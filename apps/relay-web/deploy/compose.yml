@@ -2,7 +2,7 @@
 # component that lives off developers' laptops, see docs/plan.md) and Caddy
 # for auto-TLS termination + WebSocket passthrough in front of it.
 #
-# Usage: RELAY_KEY and ROOMS_DOMAIN come from a .env file next to this
+# Usage: RELAY_AUTH_MODE, optional RELAY_KEY, and ROOMS_DOMAIN come from a .env file next to this
 # compose.yml on the VPS (see deploy/README.md) — never baked into the image.
 
 services:
@@ -11,8 +11,12 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.relay
     environment:
-      RELAY_KEY: ${RELAY_KEY:?RELAY_KEY is required}
+      RELAY_AUTH_MODE: ${RELAY_AUTH_MODE:-key}
+      RELAY_KEY: ${RELAY_KEY:-}
       RELAY_PORT: "8080"
+      RELAY_TRUSTED_PROXY_ADDRESSES: ${RELAY_TRUSTED_PROXY_ADDRESSES:-}
+      RELAY_MAX_HOSTS: ${RELAY_MAX_HOSTS-256}
+      RELAY_MAX_HOSTS_PER_SOURCE: ${RELAY_MAX_HOSTS_PER_SOURCE-32}
     restart: unless-stopped
     expose:
       - "8080"

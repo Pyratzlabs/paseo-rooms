@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runInNewContext } from "node:vm";
 
 const config = await readFile(
   new URL("../../../.gitlab-ci.yml", import.meta.url),
@@ -16,6 +21,21 @@ const deployScript = await readFile(
   new URL("../deploy/deploy.sh", import.meta.url),
   "utf8",
 );
+const proxyCompose = await readFile(
+  new URL("../deploy/compose.proxy.yml", import.meta.url),
+  "utf8",
+);
+
+test("proxy deployment restricts its raw HTTP health-check port to loopback", () => {
+  const ports = proxyCompose.match(/^    ports:\n((?:      .*\n)+)/m)?.[1];
+  assert.ok(ports, "the CI health check requires a local published port");
+  const bindings = [...ports.matchAll(/^      - "([^"]+)"$/gm)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(bindings, ["127.0.0.1:8080:8080"]);
+  assert.match(proxyCompose, /networks:\n      - web/);
+  assert.match(proxyCompose, /VIRTUAL_PORT: "8080"/);
+});
 
 test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
   const jobs = ["quality", "tests", "plugin-verify", "deploy", "pages"];
@@ -44,7 +64,10 @@ test("the deploy reconciles the live deployment and verifies it", () => {
     /needs:[\s\S]*?job: plugin-verify\n      artifacts: false/,
   );
   assert.match(config, /for attempt in \\?\$\(seq 1 15\)/);
-  assert.match(config, /curl -sS http:\/\/127\.0\.0\.1:8080\//);
+  assert.match(
+    config,
+    /curl -fsS http:\/\/127\.0\.0\.1:8080\/\.well-known\/paseo-rooms/,
+  );
 });
 
 test("SSH host identity is pinned through a CI variable", () => {
@@ -164,5 +187,384 @@ test("verification jobs run for merge request pipelines", () => {
       ),
       `${job} must run in an MR pipeline`,
     );
+  }
+});
+
+test("manual deployment succeeds only when discovery reports the requested mode", () => {
+  const verification = deployScript.slice(
+    deployScript.indexOf('echo "==> Waiting for https://'),
+  );
+  assert.ok(verification.startsWith('echo "==> Waiting for https://'));
+  const script = `
+set -euo pipefail
+fail() { echo "$*" >&2; exit 1; }
+curl() { printf '%s' "$DISCOVERY_FIXTURE"; return "$CURL_STATUS"; }
+sleep() { :; }
+${verification}`;
+  const cases = [
+    { mode: "open", body: '{"registration":"open"}', success: true },
+    { mode: "key", body: '{"registration": "key"}', success: true },
+    { mode: "open", body: '{"registration":"key"}', success: false },
+    { mode: "key", body: '{"registration":"open"}', success: false },
+    { mode: "open", body: "not JSON", success: false },
+    { mode: "open", body: "{}", success: false },
+    {
+      mode: "open",
+      body: '{"registration":"open"}',
+      curlStatus: 22,
+      success: false,
+    },
+  ];
+  for (const { mode, body, curlStatus = 0, success } of cases) {
+    const result = spawnSync("bash", ["-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ROOMS_DOMAIN: "fixture.invalid",
+        RELAY_AUTH_MODE: mode,
+        DISCOVERY_FIXTURE: body,
+        CURL_STATUS: String(curlStatus),
+      },
+    });
+    assert.ifError(result.error);
+    assert.equal(result.status === 0, success, result.stderr);
+    if (success) {
+      assert.match(result.stdout, /Deploy complete/);
+    } else {
+      assert.doesNotMatch(result.stdout, /Deploy complete/);
+      assert.match(result.stderr, /registration mode.*after 30 attempts/);
+    }
+  }
+});
+
+test("CI schedules only deployments with complete registration and SSH settings", () => {
+  const rule = config.match(
+    /^deploy:[\s\S]*?^  rules:\n    - if: ([^\n]+)/m,
+  )?.[1];
+  assert.ok(rule, "deployment rule must be present");
+  const defaults = {
+    CI_COMMIT_BRANCH: "main",
+    DEPLOY_SSH_TARGET: "fixture-host",
+    DEPLOY_SSH_PRIVATE_KEY: "fixture-private-key",
+    DEPLOY_SSH_KNOWN_HOSTS: "fixture-known-hosts",
+    ROOMS_DOMAIN: "private.example.com",
+  };
+  // Evaluate the actual GitLab rule against fixture variables. Unset variables
+  // are null; explicitly empty variables are empty strings in GitLab rules.
+  const scheduled = (variables) =>
+    Boolean(
+      runInNewContext(
+        rule.replace(/\$([A-Z_]+)/g, (_, name) =>
+          JSON.stringify({ ...defaults, ...variables }[name] ?? null),
+        ),
+        {},
+        { timeout: 1000 },
+      ),
+    );
+  for (const mode of [null, "", "key"]) {
+    assert.equal(scheduled({ RELAY_AUTH_MODE: mode }), false);
+    assert.equal(
+      scheduled({ RELAY_AUTH_MODE: mode, RELAY_KEY: "fixture-key" }),
+      true,
+    );
+  }
+  for (const mode of [null, "", "open"]) {
+    assert.equal(
+      scheduled({
+        ROOMS_DOMAIN: "paseo-rooms.pyratzlabs.fr",
+        RELAY_AUTH_MODE: mode,
+      }),
+      true,
+    );
+  }
+  assert.equal(scheduled({ RELAY_AUTH_MODE: "open" }), true);
+  assert.equal(
+    scheduled({
+      ROOMS_DOMAIN: "paseo-rooms.pyratzlabs.fr",
+      RELAY_AUTH_MODE: "key",
+    }),
+    false,
+  );
+  assert.equal(
+    scheduled({ RELAY_AUTH_MODE: "invalid", RELAY_KEY: "fixture-key" }),
+    false,
+  );
+  for (const name of [
+    "DEPLOY_SSH_TARGET",
+    "DEPLOY_SSH_PRIVATE_KEY",
+    "DEPLOY_SSH_KNOWN_HOSTS",
+  ]) {
+    for (const missing of [null, ""]) {
+      assert.equal(
+        scheduled({ RELAY_AUTH_MODE: "open", [name]: missing }),
+        false,
+      );
+    }
+  }
+  assert.equal(
+    scheduled({ CI_COMMIT_BRANCH: "feature", RELAY_AUTH_MODE: "open" }),
+    false,
+  );
+});
+
+test("manual deploy rejects invalid capacity before any remote command", () => {
+  for (const name of ["RELAY_MAX_HOSTS", "RELAY_MAX_HOSTS_PER_SOURCE"]) {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+ssh() { echo 'unexpected remote command' >&2; exit 99; }
+rsync() { echo 'unexpected sync' >&2; exit 99; }
+npm() { echo 'unexpected build' >&2; exit 99; }
+source "$DEPLOY_SCRIPT"
+`,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DEPLOY_SCRIPT: new URL("../deploy/deploy.sh", import.meta.url)
+            .pathname,
+          SSH_TARGET: "fixture-host",
+          ROOMS_DOMAIN: "fixture.invalid",
+          RELAY_AUTH_MODE: "open",
+          RELAY_MAX_HOSTS: "256",
+          RELAY_MAX_HOSTS_PER_SOURCE: "32",
+          [name]: "0",
+        },
+      },
+    );
+    assert.ifError(result.error);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, new RegExp(name));
+    assert.doesNotMatch(result.stderr, /unexpected/);
+  }
+});
+
+test("CI remote verification requires a complete successful discovery response", () => {
+  const block = config.match(
+    /^deploy:[\s\S]*?^  script:\n    - \|\n([\s\S]*?)^  rules:/m,
+  )?.[1];
+  assert.ok(block);
+  // Capture the actual expanded SSH command, then execute only its verification
+  // loop with local curl/sleep/docker fixtures. No SSH or deployment is run.
+  const capture = spawnSync(
+    "sh",
+    [
+      "-eu",
+      "-c",
+      `
+ssh() { case "$2" in "docker inspect "*) printf '%s' '172.18.0.3' ;; "printf '%s' "*) printf '%s' "$2" ;; esac; }
+rsync() { :; }
+${block.replace(/^      /gm, "")}`,
+    ],
+    {
+      encoding: "utf8",
+      cwd: new URL("../../../", import.meta.url),
+      env: {
+        ...process.env,
+        DEPLOY_SSH_TARGET: "fixture-host",
+        DEPLOY_REMOTE_DIR: "/fixture",
+        ROOMS_DOMAIN: "fixture.invalid",
+        RELAY_AUTH_MODE: "open",
+        RELAY_KEY: "",
+      },
+    },
+  );
+  assert.equal(capture.status, 0, capture.stderr);
+  const loop = capture.stdout.match(/ && (for attempt in [\s\S]+)$/)?.[1];
+  assert.ok(loop, "remote deployment must verify discovery");
+  const cases = [
+    { body: '{"registration":"open"}', status: 18, success: false },
+    { body: '{"registration":"open"', status: 0, success: false },
+    { body: '{"registration":"key"}', status: 0, success: false },
+    { body: "not JSON", status: 0, success: false },
+    { body: '{"registration":"open"}', status: 0, success: true },
+    { body: '{ "registration": "open" }', status: 0, success: true },
+  ];
+  for (const { body, status, success } of cases) {
+    const result = spawnSync(
+      "sh",
+      [
+        "-c",
+        `
+curl() { printf '%s' "$DISCOVERY_FIXTURE"; return "$CURL_STATUS"; }
+sleep() { :; }
+docker() {
+  # compose --env-file .env -f <file> exec -T relay <command...>
+  shift 8
+  "$@"
+}
+${loop}`,
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          DISCOVERY_FIXTURE: body,
+          CURL_STATUS: String(status),
+        },
+      },
+    );
+    assert.equal(
+      result.status === 0,
+      success,
+      `curl=${status}, body=${body}: ${result.stderr}`,
+    );
+  }
+});
+
+test("CI selects and persists public or private registration before deploying", () => {
+  const block = config.match(
+    /^deploy:[\s\S]*?^  script:\n    - \|\n([\s\S]*?)^  rules:/m,
+  )?.[1];
+  assert.ok(block, "deployment script must be present");
+  // Shell functions avoid executing files from a potentially noexec tmpdir.
+  // Capture the SSH command as data; never run it against a remote host.
+  const script = `
+ssh() {
+  case "$2" in
+    "docker inspect "*) printf '%s' "$PROXY_ADDRESS_FIXTURE" ;;
+    "mkdir -p "*) printf '%s' 'mkdir' > "$MUTATION_OUTPUT" ;;
+    "printf '%s' "*) printf '%s' "$2" > "$POLICY_OUTPUT" ;;
+  esac
+}
+rsync() { printf '%s' 'rsync' > "$MUTATION_OUTPUT"; }
+${block.replace(/^      /gm, "")}`;
+  const directory = mkdtempSync(join(tmpdir(), "rooms-deploy-policy-"));
+  const output = join(directory, "environment");
+  const mutationOutput = join(directory, "mutations");
+  const cases = [
+    {
+      domain: "paseo-rooms.pyratzlabs.fr",
+      mode: "",
+      key: "",
+      expected: "open",
+    },
+    {
+      domain: "private.example.com",
+      mode: "",
+      key: "fixture-key",
+      expected: "key",
+    },
+    { domain: "", mode: "", key: "fixture-key", expected: "key" },
+    { domain: "private.example.com", mode: "open", key: "", expected: "open" },
+    {
+      domain: "private.example.com",
+      mode: "open",
+      key: "",
+      proxy: "",
+      error: /Cannot identify nginx-proxy/,
+    },
+    {
+      domain: "private.example.com",
+      mode: "open",
+      key: "",
+      expected: "open",
+      proxy: "",
+      trusted: "192.0.2.10",
+    },
+    {
+      domain: "fixture.invalid",
+      mode: "open",
+      key: "",
+      maxHosts: "0",
+      error: /RELAY_MAX_HOSTS/,
+    },
+    {
+      domain: "fixture.invalid",
+      mode: "open",
+      key: "",
+      maxHosts: "1e3",
+      error: /RELAY_MAX_HOSTS/,
+    },
+    {
+      domain: "fixture.invalid",
+      mode: "open",
+      key: "",
+      maxPerSource: "0",
+      error: /RELAY_MAX_HOSTS_PER_SOURCE/,
+    },
+    {
+      domain: "paseo-rooms.pyratzlabs.fr",
+      mode: "key",
+      key: "fixture-key",
+      expected: "key",
+    },
+    {
+      domain: "private.example.com",
+      mode: "",
+      key: "",
+      error: /RELAY_KEY is required/,
+    },
+    {
+      domain: "paseo-rooms.pyratzlabs.fr",
+      mode: "invalid",
+      key: "",
+      error: /RELAY_AUTH_MODE must be/,
+    },
+  ];
+  try {
+    for (const {
+      domain,
+      mode,
+      key,
+      expected,
+      error,
+      proxy = "172.18.0.3",
+      trusted = "",
+      maxHosts = "512",
+      maxPerSource = "48",
+    } of cases) {
+      rmSync(output, { force: true });
+      rmSync(mutationOutput, { force: true });
+      const result = spawnSync("sh", ["-eu", "-c", script], {
+        encoding: "utf8",
+        cwd: new URL("../../../", import.meta.url),
+        env: {
+          ...process.env,
+          POLICY_OUTPUT: output,
+          MUTATION_OUTPUT: mutationOutput,
+          DEPLOY_SSH_TARGET: "fixture-host",
+          DEPLOY_REMOTE_DIR: "/fixture",
+          ROOMS_DOMAIN: domain,
+          RELAY_AUTH_MODE: mode,
+          RELAY_KEY: key,
+          RELAY_TRUSTED_PROXY_ADDRESSES: trusted,
+          PROXY_ADDRESS_FIXTURE: proxy,
+          RELAY_MAX_HOSTS: maxHosts,
+          RELAY_MAX_HOSTS_PER_SOURCE: maxPerSource,
+        },
+      });
+      if (error) {
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, error);
+        assert.throws(() => readFileSync(output), { code: "ENOENT" });
+        assert.throws(() => readFileSync(mutationOutput), { code: "ENOENT" });
+      } else {
+        assert.equal(result.status, 0, result.stderr);
+        const command = readFileSync(output, "utf8");
+        const payload = command.match(/^printf '%s' '([^']+)'/);
+        assert.ok(payload, "deployment must persist its environment");
+        const environment = Buffer.from(payload[1], "base64").toString("utf8");
+        assert.match(
+          environment,
+          new RegExp(`^RELAY_AUTH_MODE=${expected}$`, "m"),
+        );
+        assert.match(environment, new RegExp(`^RELAY_KEY=${key}$`, "m"));
+        assert.match(environment, /^RELAY_MAX_HOSTS=512$/m);
+        assert.match(environment, /^RELAY_MAX_HOSTS_PER_SOURCE=48$/m);
+        assert.ok(
+          environment
+            .split("\n")
+            .includes(
+              `RELAY_TRUSTED_PROXY_ADDRESSES=${trusted || (domain ? proxy : "")}`,
+            ),
+        );
+      }
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
   }
 });

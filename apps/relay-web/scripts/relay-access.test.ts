@@ -3,6 +3,9 @@ import { once } from "node:events";
 import { test } from "node:test";
 import { WebSocket } from "ws";
 import { createRelay, type Relay } from "../src/relay/relay.js";
+import * as relayRuntime from "../src/relay/relay.js";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import {
   createRouteOwnership,
   routeTokenForSecret,
@@ -55,6 +58,11 @@ test("configuration fails closed and ownership secrets are canonical", () => {
   assert.throws(
     () => createRelay({ authMode: "open", limits: { maxHosts: 0 } }),
     /limit/,
+  );
+  assert.throws(
+    () =>
+      createRelay({ authMode: "open", trustedProxyAddresses: ["127.0.0.0/8"] }),
+    /trusted proxy address/,
   );
   assert.equal(routeTokenForSecret("x"), null);
   const ownership = createRouteOwnership();
@@ -235,7 +243,118 @@ test("browser capacity and idle lifetime release admission slots", async () => {
   }
 });
 
-test("only configured immediate proxies can supply a single forwarded source", async () => {
+test("host limits from environment retain defaults and reject invalid values", () => {
+  assert.deepEqual(relayRuntime.hostLimitsFromEnvironment({}), {
+    maxHosts: 256,
+    maxHostsPerSource: 32,
+  });
+  assert.deepEqual(
+    relayRuntime.hostLimitsFromEnvironment({
+      RELAY_MAX_HOSTS: "512",
+      RELAY_MAX_HOSTS_PER_SOURCE: "48",
+    }),
+    { maxHosts: 512, maxHostsPerSource: 48 },
+  );
+  for (const name of ["RELAY_MAX_HOSTS", "RELAY_MAX_HOSTS_PER_SOURCE"]) {
+    for (const value of [
+      "",
+      "0",
+      "-1",
+      "1.5",
+      "NaN",
+      "Infinity",
+      "1e3",
+      "9007199254740992",
+    ]) {
+      assert.throws(
+        () => relayRuntime.hostLimitsFromEnvironment({ [name]: value }),
+        new RegExp(name),
+      );
+    }
+  }
+});
+
+test("deployment capacity preflight agrees with the runtime parser", () => {
+  const validator = fileURLToPath(
+    new URL("../deploy/validate-capacity.sh", import.meta.url),
+  );
+  for (const name of ["RELAY_MAX_HOSTS", "RELAY_MAX_HOSTS_PER_SOURCE"]) {
+    for (const value of [
+      "1",
+      "32",
+      "00032",
+      "9007199254740991",
+      "",
+      "0",
+      "-1",
+      "1.5",
+      "1e3",
+      "NaN",
+      "Infinity",
+      "9007199254740992",
+      "9007199254740993",
+      "1\n2",
+      " 32",
+      "32 ",
+    ]) {
+      const limits = {
+        RELAY_MAX_HOSTS: "256",
+        RELAY_MAX_HOSTS_PER_SOURCE: "32",
+        [name]: value,
+      };
+      let valid = true;
+      try {
+        relayRuntime.hostLimitsFromEnvironment(limits);
+      } catch {
+        valid = false;
+      }
+      const result = spawnSync("sh", [validator], {
+        encoding: "utf8",
+        env: { ...process.env, ...limits },
+      });
+      assert.ifError(result.error);
+      assert.equal(
+        result.status === 0,
+        valid,
+        `${name}=${JSON.stringify(value)}: ${result.stderr}`,
+      );
+      if (!valid) assert.match(result.stderr, new RegExp(name));
+    }
+  }
+});
+
+test("a trusted proxy isolates sources and ignores spoofed forwarding prefixes", async () => {
+  const relay = await createRelay({
+    port: 0,
+    authMode: "open",
+    log: () => {},
+    // The IPv4 entry must match an IPv4-mapped IPv6 socket address too.
+    trustedProxyAddresses: ["127.0.0.1"],
+    limits: { maxHostsPerSource: 1, maxHosts: 3 },
+  });
+  try {
+    const attacker = await host(relay, undefined, "203.0.113.99, 192.0.2.1");
+    assert.equal(
+      (await claim(attacker, { ...createRouteOwnership(), protocol: 2 })).type,
+      "registered",
+    );
+    assert.equal(
+      await rejected(relay, undefined, "203.0.113.88, 192.0.2.1"),
+      503,
+    );
+    const colleague = await host(relay, undefined, "198.51.100.4, 192.0.2.2");
+    assert.equal(
+      (await claim(colleague, { ...createRouteOwnership(), protocol: 2 })).type,
+      "registered",
+    );
+    await host(relay, undefined, "192.0.2.3");
+    assert.equal(await rejected(relay, undefined, "192.0.2.4"), 503);
+  } finally {
+    await relay.close();
+  }
+});
+
+test("only configured immediate proxies can supply a forwarded source", async () => {
   const relay = await createRelay({
     port: 0,
     authMode: "open",
@@ -247,7 +366,13 @@ test("only configured immediate proxies can supply a single forwarded source", a
     await host(relay, undefined, "192.0.2.1");
     await host(relay, undefined, "192.0.2.2");
     assert.equal(await rejected(relay, undefined, "192.0.2.1"), 503);
-    await host(relay, undefined, "192.0.2.3, 192.0.2.4");
+    await host(relay, undefined, "2001:db8::1");
+    assert.equal(await rejected(relay, undefined, "::ffff:192.0.2.1"), 503);
+    assert.equal(
+      await rejected(relay, undefined, "2001:0db8:0:0:0:0:0:1"),
+      503,
+    );
+    await host(relay, undefined, "192.0.2.3, invalid");
     assert.equal(await rejected(relay), 503);
   } finally {
     await relay.close();

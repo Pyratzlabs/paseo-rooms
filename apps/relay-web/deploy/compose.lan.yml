@@ -4,18 +4,24 @@
 # use compose.yml (relay + Caddy auto-TLS) instead.
 #
 #   RELAY_KEY=... docker compose -f compose.lan.yml up -d
+# Use RELAY_AUTH_MODE=open to allow public registration without a key.
 #
 # Put a TLS reverse proxy in front of this stack before using it from a browser
 # client. Laptop side then dials: RELAY_URL=wss://<relay-domain>/host
-# RELAY_KEY=... npm start
+# For a private relay, also set RELAY_KEY=... when starting the laptop server.
+# Open relays do not require a registration key.
 services:
   relay:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.relay
     environment:
-      RELAY_KEY: ${RELAY_KEY:?RELAY_KEY is required}
+      RELAY_AUTH_MODE: ${RELAY_AUTH_MODE:-key}
+      RELAY_KEY: ${RELAY_KEY:-}
       RELAY_PORT: "8080"
+      RELAY_TRUSTED_PROXY_ADDRESSES: ${RELAY_TRUSTED_PROXY_ADDRESSES:-}
+      RELAY_MAX_HOSTS: ${RELAY_MAX_HOSTS-256}
+      RELAY_MAX_HOSTS_PER_SOURCE: ${RELAY_MAX_HOSTS_PER_SOURCE-32}
     ports:
       - "8080:8080"
     restart: unless-stopped
