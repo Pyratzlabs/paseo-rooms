@@ -14,9 +14,8 @@ const e2eeSmoke = process.env.PASEO_E2EE_SMOKE === "1";
 export default defineConfig({
   root: import.meta.dirname,
   base: "/",
-  // @getpaseo/relay's published browser export points to an unshipped source
-  // file. Node resolves its built artifact through the `node` condition. Pin
-  // Vite to that same published artifact in one audited compatibility seam.
+  // Resolve the public E2EE export to the same shipped artifact for both the
+  // browser bundle and Node runtime in one audited compatibility seam.
   resolve: {
     alias: {
       "@getpaseo/relay/e2ee": require.resolve("@getpaseo/relay/e2ee"),

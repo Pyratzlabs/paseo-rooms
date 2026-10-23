@@ -7,7 +7,7 @@ the whole Paseo daemon.
 ## Paseo APIs used
 
 Everything is built on the official TypeScript SDK, **`@getpaseo/client`**
-(v0.10.3, same protocol the Paseo apps use), talking to the local daemon at
+(v0.12.0, same protocol the Paseo apps use), talking to the local daemon at
 `ws://127.0.0.1:6767/ws`:
 
 | Need | SDK call |
