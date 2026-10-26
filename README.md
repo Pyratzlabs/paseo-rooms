@@ -76,6 +76,17 @@ messages landing on the same agent timeline, reload-restores-history, invalid
 tokens rejected, client-supplied `agent_id` ignored, agent id never exposed.
 The agent is archived afterwards. `npm run typecheck` type-checks the code.
 
+## Continuous integration
+
+The public [GitHub mirror](https://github.com/Pyratzlabs/paseo-rooms) runs
+quality/build checks, relay and room tests, and plugin distribution verification
+on pushes to `main`, pull requests, and manual workflow runs. It uses Node.js 22
+and the same verification commands as GitLab, with no deployment secrets.
+
+GitLab remains the development source and owns relay deployment and Pages.
+After changes merge there, update the public mirror with a fast-forward push of
+GitLab's `main`; GitHub does not automatically synchronize from GitLab.
+
 ## State
 
 - `data/rooms.json` — `share_token -> agent` mappings (the only state this

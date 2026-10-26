@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Quality and builds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run typecheck:web
+      - run: npm run build:docs
+      - run: npm run build:web
+
+  tests:
+    name: Relay and room tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      # Static-serving regressions exercise the exact assets built in this job.
+      - run: npm run build:docs
+      - run: npm run build:web
+      - run: npm run test:relay
+      - run: npm run test:relay-access
+      - run: npm run test:relay-client
+      - run: npm run test:e2ee
+      - run: npm run test:secure-client
+      - run: npm run test:relay-origin
+      - run: npm run test:relay-target
+      - run: npm run test:e2ee-browser
+      - run: npm run test:name
+      - run: npm run test:scroll
+      - run: npm run test:room-ui
+      - run: npm run test:timeline
+      - run: npm run test:questions
+      - run: npm run test:public-events
+      - run: npm run test:presence
+      - run: npm run test:ci
+      - run: npm run test:lock
+
+  plugin-verify:
+    name: Plugin distribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run verify:plugin-distribution
