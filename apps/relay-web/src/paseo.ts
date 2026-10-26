@@ -222,9 +222,13 @@ export async function subscribeAgent(
 export async function sendToAgent(
   agentId: string,
   text: string,
+  options?: {
+    messageId: string;
+    images?: Array<{ data: string; mimeType: string }>;
+  },
 ): Promise<void> {
   const agent = await getAgentHandle(agentId);
-  await agent.send(text);
+  await agent.send(text, options);
 }
 
 export async function agentInfo(agentId: string): Promise<{

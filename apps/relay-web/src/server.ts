@@ -214,7 +214,14 @@ async function joinRoom(room: Room, socket: RoomSocket): Promise<void> {
 /** Adapt a real `ws` socket to the transport-agnostic `RoomSocket` shape. */
 function wrapWebSocket(ws: WebSocket): RoomSocket {
   return {
+    get bufferedAmount() {
+      return ws.bufferedAmount;
+    },
     send: (data) => {
+      if (ws.bufferedAmount > 256 * 1024) {
+        ws.close(1013, "slow room connection");
+        return;
+      }
       if (ws.readyState === WebSocket.OPEN) ws.send(data);
     },
     close: (code, reason) => ws.close(code, reason),

@@ -124,6 +124,7 @@ export interface ApiResponse {
  * `joinRoom` cannot tell them apart.
  */
 export interface RoomSocket {
+  readonly bufferedAmount?: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
   /** Register a close callback (fires once, whoever closed first). */
@@ -278,7 +279,13 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
   const sockets = new Map<string, VirtualSocket>();
 
   function send(frame: LaptopFrame): void {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      if (ws.bufferedAmount > 512 * 1024) {
+        ws.close(1013, "slow relay connection");
+        return;
+      }
+      ws.send(JSON.stringify(frame));
+    }
   }
 
   function resolveConnectionWaiters(): void {
@@ -299,6 +306,9 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
 
   /** A relay-forwarded browser socket, dressed up as a local room socket. */
   class VirtualSocket implements RoomSocket {
+    get bufferedAmount(): number {
+      return ws?.bufferedAmount ?? 0;
+    }
     private closed = false;
     private handlers: Array<() => void> = [];
     private messageHandlers: Array<(data: string) => void> = [];

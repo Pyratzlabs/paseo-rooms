@@ -6,6 +6,19 @@ import type {
   TimelineItem,
   StreamEvent,
 } from "./api.js";
+import {
+  IMAGE_CAPABILITY,
+  IMAGE_CHUNK_BYTES,
+  MAX_IMAGE_BYTES,
+  MAX_MESSAGE_BYTES,
+  IMAGE_REQUEST_TIMEOUT_MS,
+  isObject,
+  validId,
+  isRoomImage,
+  type RoomImage,
+  type UploadedImage,
+  type SubmissionReceipt,
+} from "../../shared/room-attachments.js";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -24,6 +37,7 @@ export interface SecureWelcome {
   history: Array<{ item: TimelineItem }>;
   participants: RoomParticipant[];
   working: boolean;
+  images: boolean;
 }
 
 export type SecureEvent =
@@ -48,6 +62,13 @@ interface Handlers {
 
 export interface SecureRoomSession {
   sendMessage(message: string): Promise<void>;
+  sendImageMessage(
+    message: string,
+    file: File | null,
+    submissionKey: string,
+    progress: (value: number) => void,
+  ): Promise<SubmissionReceipt>;
+  readImage(image: RoomImage, signal?: AbortSignal): Promise<Blob>;
   answer(questionId: string, actionId: string): Promise<void>;
   answerPrompts(questionId: string, answers: unknown[]): Promise<void>;
   close(): void;
@@ -231,6 +252,9 @@ function parseWelcome(payload: unknown): SecureWelcome | null {
     history,
     participants,
     working: payload.working === true,
+    images:
+      isObject(payload.capabilities) &&
+      payload.capabilities[IMAGE_CAPABILITY] === true,
   };
 }
 
@@ -292,6 +316,26 @@ export async function connectSecureRoom(
   let expectedHostSeq = 1;
   let clientSeq = 0;
   const seenIds: string[] = [];
+  let imageSupport = false;
+  let closed = false;
+  let outgoing = Promise.resolve();
+  let queued = 0;
+  const requests = new Map<
+    string,
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+  const rejectRequests = () => {
+    closed = true;
+    for (const r of requests.values()) {
+      clearTimeout(r.timer);
+      r.reject(new Error("connection_closed"));
+    }
+    requests.clear();
+  };
 
   const transport = {
     onmessage: null as
@@ -300,6 +344,7 @@ export async function connectSecureRoom(
     onclose: null as ((code: number, reason: string) => void) | null,
     onerror: null as ((error: Error) => void) | null,
     send(data: string | ArrayBuffer) {
+      if (ws.bufferedAmount > 256 * 1024) throw new Error("connection_busy");
       const bytes =
         typeof data === "string"
           ? textEncoder.encode(data)
@@ -348,6 +393,7 @@ export async function connectSecureRoom(
     }
   });
   ws.addEventListener("close", () => {
+    rejectRequests();
     transport.onclose?.(1000, "closed");
     handlers.onClose();
   });
@@ -370,10 +416,33 @@ export async function connectSecureRoom(
           sessionId = record.sessionId;
           const welcome = parseWelcome(record.payload);
           if (!welcome) throw new Error("invalid secure welcome");
+          imageSupport = welcome.images;
           handlers.onWelcome(welcome);
           return;
         }
         if (!sessionId) throw new Error("secure event before welcome");
+        if (record.kind === "response") {
+          if (
+            !isObject(record.payload) ||
+            !validId(record.payload.requestId) ||
+            typeof record.payload.ok !== "boolean"
+          )
+            throw new Error("invalid response");
+          const pending = requests.get(record.payload.requestId);
+          if (!pending) return;
+          requests.delete(record.payload.requestId);
+          clearTimeout(pending.timer);
+          if (record.payload.ok) pending.resolve(record.payload.value);
+          else
+            pending.reject(
+              new Error(
+                typeof record.payload.code === "string"
+                  ? record.payload.code
+                  : "request_failed",
+              ),
+            );
+          return;
+        }
         const event = parseSecureStreamEvent(record.payload);
         // Paseo can add timeline event kinds independently of this renderer.
         // They are authenticated by the room channel, so an event we do not
@@ -401,30 +470,204 @@ export async function connectSecureRoom(
       joinAttemptId: randomId(),
       inviteSecret: invite.inviteSecret,
       displayName,
-      capabilities: { messages: true, questions: true },
+      capabilities: {
+        messages: true,
+        questions: true,
+        [IMAGE_CAPABILITY]: true,
+      },
     }),
   );
 
   async function send(kind: string, payload: unknown): Promise<void> {
-    if (!sessionId) throw new Error("secure room is not ready");
-    clientSeq += 1;
-    await channel.send(
-      encodeJson({
+    if (!sessionId || closed) throw new Error("secure room is not ready");
+    if (queued >= 4) throw new Error("connection_busy");
+    queued++;
+    const next = outgoing.then(async () => {
+      if (closed) throw new Error("connection_closed");
+      const encoded = encodeJson({
         v: 2,
         sessionId,
-        seq: clientSeq,
+        seq: clientSeq + 1,
         id: randomId(),
         kind,
         payload,
-      }),
-    );
+      });
+      if (encoded.byteLength > MAX_APP_RECORD_BYTES)
+        throw new Error("message_too_large");
+      clientSeq += 1;
+      try {
+        await channel.send(encoded);
+      } catch (cause) {
+        rejectRequests();
+        channel.close();
+        throw cause;
+      }
+    });
+    outgoing = next.catch(() => {});
+    try {
+      await next;
+    } finally {
+      queued--;
+    }
+  }
+
+  async function request(
+    kind: string,
+    payload: Record<string, unknown>,
+  ): Promise<unknown> {
+    if (!imageSupport) throw new Error("images_unsupported");
+    if (requests.size >= 4) throw new Error("connection_busy");
+    const requestId = randomId();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        requests.delete(requestId);
+        reject(new Error("request_timeout"));
+      }, IMAGE_REQUEST_TIMEOUT_MS);
+      requests.set(requestId, { resolve, reject, timer });
+      void send(kind, { ...payload, requestId }).catch((error) => {
+        const pending = requests.get(requestId);
+        if (!pending) return;
+        requests.delete(requestId);
+        clearTimeout(timer);
+        reject(error);
+      });
+    });
+  }
+  function receipt(value: unknown): SubmissionReceipt {
+    if (
+      !isObject(value) ||
+      !validId(value.submissionKey) ||
+      !validId(value.messageId) ||
+      !["pending", "accepted", "rejected", "unknown"].includes(
+        String(value.status),
+      )
+    )
+      throw new Error("invalid_receipt");
+    return value as unknown as SubmissionReceipt;
+  }
+  async function sendImageMessage(
+    message: string,
+    file: File | null,
+    submissionKey: string,
+    progress: (value: number) => void,
+  ): Promise<SubmissionReceipt> {
+    if (textEncoder.encode(message).length > MAX_MESSAGE_BYTES)
+      throw new Error("message_too_large");
+    try {
+      return receipt(await request("submission_status", { submissionKey }));
+    } catch (cause) {
+      if (!(cause instanceof Error) || cause.message !== "submission_missing")
+        throw cause;
+    }
+    let uploaded: UploadedImage | undefined;
+    if (file) {
+      if (file.size < 1 || file.size > MAX_IMAGE_BYTES)
+        throw new Error("invalid_image");
+      const start = await request("image_begin", {
+        mimeType: file.type,
+        byteLength: file.size,
+      });
+      if (
+        !isObject(start) ||
+        !validId(start.imageId) ||
+        !validId(start.capability)
+      )
+        throw new Error("invalid_upload");
+      const auth = { imageId: start.imageId, capability: start.capability };
+      try {
+        const raw = new Uint8Array(await file.arrayBuffer());
+        for (let offset = 0; offset < raw.length; offset += IMAGE_CHUNK_BYTES) {
+          const chunk = raw.subarray(offset, offset + IMAGE_CHUNK_BYTES);
+          let binary = "";
+          for (const byte of chunk) binary += String.fromCharCode(byte);
+          const response = await request("image_chunk", {
+            ...auth,
+            offset,
+            data: btoa(binary),
+          });
+          if (!isObject(response) || response.offset !== offset + chunk.length)
+            throw new Error("invalid_upload");
+          progress(Math.round(((offset + chunk.length) / raw.length) * 100));
+        }
+        const value = await request("image_finish", auth);
+        if (
+          !isObject(value) ||
+          !isRoomImage(value.image) ||
+          value.capability !== auth.capability
+        )
+          throw new Error("invalid_upload");
+        uploaded = { image: value.image, capability: auth.capability };
+      } catch (cause) {
+        void request("image_cancel", auth).catch(() => {});
+        throw cause;
+      }
+    }
+    try {
+      return receipt(
+        await request("message", {
+          message,
+          submissionKey,
+          ...(uploaded
+            ? { imageId: uploaded.image.id, capability: uploaded.capability }
+            : {}),
+        }),
+      );
+    } catch (cause) {
+      if (uploaded)
+        void request("image_cancel", {
+          imageId: uploaded.image.id,
+          capability: uploaded.capability,
+        }).catch(() => {});
+      throw cause;
+    }
+  }
+  async function readImage(
+    image: RoomImage,
+    signal?: AbortSignal,
+  ): Promise<Blob> {
+    const chunks: Uint8Array<ArrayBuffer>[] = [];
+    for (
+      let offset = 0;
+      offset < image.byteLength;
+      offset += IMAGE_CHUNK_BYTES
+    ) {
+      if (signal?.aborted) throw new Error("cancelled");
+      const value = await request("image_read", { imageId: image.id, offset });
+      if (
+        !isObject(value) ||
+        value.imageId !== image.id ||
+        value.offset !== offset ||
+        value.byteLength !== image.byteLength ||
+        typeof value.data !== "string" ||
+        value.data.length > (IMAGE_CHUNK_BYTES / 3) * 4 ||
+        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
+          value.data,
+        )
+      )
+        throw new Error("invalid_image_chunk");
+      const bytes = Uint8Array.from(atob(value.data), (char) =>
+        char.charCodeAt(0),
+      );
+      if (
+        bytes.length !== Math.min(IMAGE_CHUNK_BYTES, image.byteLength - offset)
+      )
+        throw new Error("invalid_image_chunk");
+      chunks.push(bytes);
+    }
+    if (signal?.aborted) throw new Error("cancelled");
+    return new Blob(chunks, { type: image.mimeType });
   }
 
   return {
     sendMessage: (message) => send("message", { message }),
+    sendImageMessage,
+    readImage,
     answer: (questionId, actionId) => send("answer", { questionId, actionId }),
     answerPrompts: (questionId, answers) =>
       send("answer_prompts", { questionId, answers }),
-    close: () => channel.close(),
+    close: () => {
+      rejectRequests();
+      channel.close();
+    },
   };
 }

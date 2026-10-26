@@ -42,6 +42,7 @@ const bundle = await build({
               calls.push("close");
             }, agents: { ref: () => ({
               refresh: async () => ({ agent: { pendingPermissions: pending } }),
+              send: async (text, options) => { calls.push({ text, options }); },
               respondToPermission: async (options) => { calls.push(options); }
             }) } };
             instances.push(instance);
@@ -92,6 +93,16 @@ test("answers questions through the public agent handle and reuses its connectio
   );
   await adapter.closePaseoConnections();
   assert.equal(adapter.calls.at(-1), "close");
+});
+
+test("forwards original image bytes and a supplied message ID through the public SDK handle", async () => {
+  const options = {
+    messageId: "room-message-id",
+    images: [{ data: "AQID", mimeType: "image/png" }],
+  };
+  await adapter.sendToAgent("agent", "[Alice]\ncaption", options);
+  assert.deepEqual(adapter.calls.at(-1), { text: "[Alice]\ncaption", options });
+  await adapter.closePaseoConnections();
 });
 
 test("shutdown closes pending SDK connections and cancels retries", async () => {

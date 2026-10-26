@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import { test } from "node:test";
 import { createClientChannel, type Transport } from "../src/paseo-e2ee.js";
 import { createRoom, deleteRoom, publicRoomUrl } from "../src/rooms.js";
@@ -634,3 +635,527 @@ test("secure room bounds unauthenticated handshakes per route", async () => {
     deleteRoom(room.token);
   }
 });
+
+// Real encrypted-channel integration: the wire, not only store helpers.
+async function imageTestGuest(
+  room: ReturnType<typeof createRoom>,
+  deps: SecureRoomDeps,
+  name = "Alice",
+) {
+  const [server, browser] = socketPair(),
+    received = receivedRecords();
+  const opened = openSecureRoomSocket(
+    `/v2/rooms/${room.token}/ws`,
+    server,
+    () => true,
+    async () => true,
+    deps,
+  );
+  const channel = await createClientChannel(
+    browserTransport(browser),
+    room.hostPublicKey,
+    {
+      onmessage(data) {
+        assert.ok(
+          (typeof data === "string"
+            ? Buffer.byteLength(data)
+            : data.byteLength) <=
+            64 * 1024,
+        );
+        received.onmessage(data);
+      },
+      onerror() {},
+    },
+  );
+  await opened;
+  const random = () => crypto.randomUUID().replaceAll("-", "");
+  let seq = 0;
+  await channel.send(
+    encoder.encode(
+      JSON.stringify({
+        v: 2,
+        kind: "join",
+        joinAttemptId: random(),
+        inviteSecret: room.inviteSecret,
+        displayName: name,
+        capabilities: { "room-images-v1": true },
+      }),
+    ).buffer,
+  );
+  const welcome = await received.next();
+  assert.equal(welcome.kind, "welcome");
+  async function request(kind: string, payload: Record<string, unknown>) {
+    const requestId = random();
+    await channel.send(
+      encoder.encode(
+        JSON.stringify({
+          v: 2,
+          sessionId: welcome.sessionId,
+          seq: ++seq,
+          id: random(),
+          kind,
+          payload: { ...payload, requestId },
+        }),
+      ).buffer,
+    );
+    while (true) {
+      const record = await received.next();
+      if (record.kind === "response" && record.payload.requestId === requestId)
+        return record.payload;
+    }
+  }
+  return { server, browser, channel, received, welcome, request };
+}
+
+test(
+  "two encrypted guests share byte-exact image-only SDK messages, lazy reads and zero-viewer reconnect",
+  { timeout: 5000 },
+  async () => {
+    const room = createRoom("agent", "images"),
+      fake = fakeDependencies();
+    const fs = await import("node:fs");
+    const bytes = fs.readFileSync(
+      new URL("./fixtures/room-images/fixture.png", import.meta.url),
+    );
+    let subscriber: Parameters<SecureRoomDeps["subscribeAgent"]>[1] | null =
+      null;
+    const history: Awaited<ReturnType<SecureRoomDeps["fetchFullHistory"]>> = [];
+    let sends = 0;
+    fake.deps.fetchFullHistory = async () => history;
+    fake.deps.subscribeAgent = async (_id, handler) => {
+      subscriber = handler;
+      return () => {
+        subscriber = null;
+      };
+    };
+    fake.deps.sendToAgent = async (_id, text, options) => {
+      sends++;
+      assert.equal(text, "[Alice]\n");
+      assert.deepEqual(Buffer.from(options!.images![0].data, "base64"), bytes);
+      const item = {
+        type: "user_message" as const,
+        text,
+        messageId: options!.messageId,
+        clientMessageId: options!.messageId,
+      };
+      history.push({ item, timestamp: "2026-10-26T00:00:00Z" });
+      subscriber?.({
+        agentId: "agent",
+        timestamp: "2026-10-26T00:00:00Z",
+        event: { type: "timeline", provider: "mock", item },
+      });
+    };
+    try {
+      const alice = await imageTestGuest(room, fake.deps),
+        bob = await imageTestGuest(room, fake.deps, "Bob");
+      const start = await alice.request("image_begin", {
+        mimeType: "image/png",
+        byteLength: bytes.length,
+      });
+      assert.equal(start.ok, true);
+      const auth = start.value as Record<string, unknown>;
+      assert.equal((await bob.request("image_finish", auth)).ok, false);
+      assert.equal(
+        (
+          await alice.request("image_chunk", {
+            ...auth,
+            offset: 0,
+            data: bytes.toString("base64"),
+          })
+        ).ok,
+        true,
+      );
+      const finish = await alice.request("image_finish", auth);
+      assert.equal(finish.ok, true);
+      const metadata = (finish.value as { image: { id: string } }).image;
+      const key = crypto.randomUUID().replaceAll("-", "");
+      const payload = { ...auth, message: "", submissionKey: key };
+      const sent = await alice.request("message", payload);
+      assert.equal((sent.value as { status: string }).status, "accepted");
+      assert.equal(sends, 1);
+      assert.equal((await alice.request("message", payload)).ok, true);
+      assert.equal(sends, 1);
+      const downloaded = await bob.request("image_read", {
+        imageId: metadata.id,
+        offset: 0,
+      });
+      assert.deepEqual(
+        Buffer.from((downloaded.value as { data: string }).data, "base64"),
+        bytes,
+      );
+      alice.channel.close();
+      bob.channel.close();
+      const rejoined = await imageTestGuest(room, fake.deps, "Again");
+      const snapshot = rejoined.welcome.payload.history as Array<{
+        item: { roomImages?: Array<{ id: string }> };
+      }>;
+      assert.equal(snapshot[0].item.roomImages?.[0].id, metadata.id);
+      assert.equal(
+        (await rejoined.request("submission_status", { submissionKey: key }))
+          .ok,
+        true,
+      );
+      assert.deepEqual(
+        Buffer.from(
+          (
+            (
+              await rejoined.request("image_read", {
+                imageId: metadata.id,
+                offset: 0,
+              })
+            ).value as { data: string }
+          ).data,
+          "base64",
+        ),
+        bytes,
+      );
+      // Host output respects real transport pressure even when the application
+      // channel send itself resolves immediately.
+      Object.defineProperty(rejoined.server, "bufferedAmount", {
+        value: 300 * 1024,
+      });
+      void rejoined.request("image_read", { imageId: metadata.id, offset: 0 });
+      await waitFor(() => rejoined.server.closed);
+    } finally {
+      closeSecureRoom(room.token);
+      deleteRoom(room.token);
+    }
+  },
+);
+
+test(
+  "joining clients share a subscription and unsubscribe after disconnect during a delayed subscription",
+  { timeout: 5000 },
+  async () => {
+    const room = createRoom("agent", "slow join"),
+      fake = fakeDependencies();
+    let subscribed = 0,
+      unsubscribed = 0,
+      finish!: () => void;
+    fake.deps.subscribeAgent = async () => {
+      subscribed++;
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      return () => {
+        unsubscribed++;
+      };
+    };
+    const channels: Awaited<ReturnType<typeof createClientChannel>>[] = [];
+    try {
+      for (let i = 0; i < 2; i++) {
+        const [server, browser] = socketPair();
+        const opened = openSecureRoomSocket(
+          `/v2/rooms/${room.token}/ws`,
+          server,
+          () => true,
+          async () => true,
+          fake.deps,
+        );
+        const channel = await createClientChannel(
+          browserTransport(browser),
+          room.hostPublicKey,
+          { onerror() {} },
+        );
+        await opened;
+        channels.push(channel);
+        await channel.send(
+          encoder.encode(
+            JSON.stringify({
+              v: 2,
+              kind: "join",
+              joinAttemptId: crypto.randomUUID(),
+              inviteSecret: room.inviteSecret,
+              displayName: "Guest",
+            }),
+          ).buffer,
+        );
+      }
+      await waitFor(() => subscribed === 1);
+      for (const channel of channels) channel.close();
+      finish();
+      await waitFor(() => unsubscribed === 1);
+      assert.equal(subscribed, 1);
+      fake.deps.subscribeAgent = async () => () => {};
+      const next = await imageTestGuest(room, fake.deps);
+      assert.equal(next.welcome.kind, "welcome");
+      next.channel.close();
+    } finally {
+      for (const channel of channels) channel.close();
+      closeSecureRoom(room.token);
+      deleteRoom(room.token);
+    }
+  },
+);
+
+test(
+  "failed admission settles queued work and never exhausts the global input budget",
+  { timeout: 8000 },
+  async () => {
+    const room = createRoom("agent", "cancel joins"),
+      fake = fakeDependencies();
+    let snapshotStarted = 0;
+    const pending: Array<() => void> = [];
+    fake.deps.agentInfo = async () => {
+      snapshotStarted++;
+      await new Promise<void>((resolve) => pending.push(resolve));
+      return null;
+    };
+    try {
+      for (let i = 0; i < 40; i++) {
+        const [server, browser] = socketPair();
+        const opened = openSecureRoomSocket(
+          `/v2/rooms/${room.token}/ws`,
+          server,
+          () => true,
+          async () => true,
+          fake.deps,
+        );
+        const channel = await createClientChannel(
+          browserTransport(browser),
+          room.hostPublicKey,
+          { onerror() {} },
+        );
+        await opened;
+        await channel.send(
+          encoder.encode(
+            JSON.stringify({
+              v: 2,
+              kind: "join",
+              joinAttemptId: crypto.randomUUID(),
+              inviteSecret: room.inviteSecret,
+              displayName: "Guest",
+            }),
+          ).buffer,
+        );
+        await waitFor(() => snapshotStarted === i + 1);
+        for (let seq = 1; seq <= 4; seq++)
+          await channel.send(
+            encoder.encode(
+              JSON.stringify({
+                v: 2,
+                sessionId: "not-yet-known",
+                seq,
+                id: crypto.randomUUID(),
+                kind: "message",
+                payload: { message: "never sent" },
+              }),
+            ).buffer,
+          );
+        channel.close();
+        pending.shift()?.();
+      }
+      fake.deps.agentInfo = async () => null;
+      const next = await imageTestGuest(room, fake.deps);
+      const reply = await next.request("submission_status", {
+        submissionKey: crypto.randomUUID().replaceAll("-", ""),
+      });
+      assert.equal(reply.code, "submission_missing");
+      assert.equal(next.server.closed, false);
+      next.channel.close();
+      assert.equal(fake.sentMessages.length, 0);
+    } finally {
+      for (const finish of pending) finish();
+      closeSecureRoom(room.token);
+      deleteRoom(room.token);
+    }
+  },
+);
+
+test(
+  "host rejects pipelined work beyond the bound while another encrypted room remains usable",
+  { timeout: 8000 },
+  async () => {
+    const room = createRoom("agent", "flood"),
+      other = createRoom("other", "healthy"),
+      fake = fakeDependencies();
+    let release!: () => void;
+    let started = false;
+    const [server, browser] = socketPair(),
+      received = receivedRecords();
+    try {
+      const opened = openSecureRoomSocket(
+        `/v2/rooms/${room.token}/ws`,
+        server,
+        () => true,
+        async () => {
+          started = true;
+          await new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          return true;
+        },
+        fake.deps,
+      );
+      const channel = await createClientChannel(
+        browserTransport(browser),
+        room.hostPublicKey,
+        { onmessage: received.onmessage, onerror() {} },
+      );
+      await opened;
+      await channel.send(
+        encoder.encode(
+          JSON.stringify({
+            v: 2,
+            kind: "join",
+            joinAttemptId: crypto.randomUUID(),
+            inviteSecret: room.inviteSecret,
+            displayName: "Flood",
+          }),
+        ).buffer,
+      );
+      const welcome = await received.next();
+      const record = (seq: number) =>
+        encoder.encode(
+          JSON.stringify({
+            v: 2,
+            sessionId: welcome.sessionId,
+            seq,
+            id: crypto.randomUUID(),
+            kind: "answer",
+            payload: { questionId: "q", actionId: "a" },
+          }),
+        ).buffer;
+      await channel.send(record(1));
+      await waitFor(() => started);
+      await Promise.allSettled(
+        Array.from({ length: 1001 }, (_, i) => channel.send(record(i + 2))),
+      );
+      await waitFor(() => server.closed);
+      release();
+      const healthy = await imageTestGuest(other, fakeDependencies().deps);
+      assert.equal(healthy.server.closed, false);
+      healthy.channel.close();
+    } finally {
+      release?.();
+      closeSecureRoom(room.token);
+      closeSecureRoom(other.token);
+      deleteRoom(room.token);
+      deleteRoom(other.token);
+    }
+  },
+);
+
+test(
+  "welcome precedes buffered live events and post-welcome requests while snapshot overlap deduplicates exact IDs",
+  { timeout: 5000 },
+  async () => {
+    const room = createRoom("agent", "snapshot overlap"),
+      fake = fakeDependencies(),
+      received = receivedRecords();
+    let subscriber: Parameters<SecureRoomDeps["subscribeAgent"]>[1] | undefined;
+    let release!: () => void;
+    let snapshot = false;
+    const item = (messageId: string) => ({
+      type: "user_message" as const,
+      text: `[Alice]\n${messageId}`,
+      messageId,
+      clientMessageId: messageId,
+    });
+    const publish = (messageId: string) =>
+      subscriber?.({
+        agentId: "agent",
+        timestamp: "2026-10-26T00:00:00Z",
+        event: { type: "timeline", provider: "mock", item: item(messageId) },
+      });
+    fake.deps.subscribeAgent = async (_id, handler) => {
+      subscriber = handler;
+      return () => {};
+    };
+    fake.deps.fetchFullHistory = async () => {
+      snapshot = true;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return [{ item: item("first"), timestamp: "2026-10-26T00:00:00Z" }];
+    };
+    const [server, browser] = socketPair();
+    let channel: Awaited<ReturnType<typeof createClientChannel>>;
+    try {
+      const opened = openSecureRoomSocket(
+        `/v2/rooms/${room.token}/ws`,
+        server,
+        () => true,
+        async () => true,
+        fake.deps,
+      );
+      channel = await createClientChannel(
+        browserTransport(browser),
+        room.hostPublicKey,
+        {
+          onmessage(data) {
+            const record = decodeAppRecord(data);
+            received.onmessage(data);
+            if (record.kind === "welcome") {
+              // A normal client can issue its first request directly from onWelcome.
+              void channel.send(
+                encoder.encode(
+                  JSON.stringify({
+                    v: 2,
+                    sessionId: record.sessionId,
+                    seq: 1,
+                    id: crypto.randomUUID(),
+                    kind: "submission_status",
+                    payload: {
+                      requestId: "q".repeat(24),
+                      submissionKey: "s".repeat(24),
+                    },
+                  }),
+                ).buffer,
+              );
+              publish("third");
+            }
+          },
+          onerror() {},
+        },
+      );
+      await opened;
+      await channel.send(
+        encoder.encode(
+          JSON.stringify({
+            v: 2,
+            kind: "join",
+            joinAttemptId: crypto.randomUUID(),
+            inviteSecret: room.inviteSecret,
+            displayName: "Alice",
+            capabilities: { "room-images-v1": true },
+          }),
+        ).buffer,
+      );
+      await waitFor(() => snapshot);
+      publish("first");
+      publish("second");
+      release();
+      const welcome = await received.next();
+      assert.equal(welcome.kind, "welcome");
+      const { projectTimeline, projectStream, appendLiveItem } =
+        await import("../web/src/timeline.js");
+      let projected = projectTimeline(welcome.payload.history as never);
+      const ids: string[] = [];
+      let response = false;
+      while (ids.length < 3 || !response) {
+        const record = await received.next();
+        if (record.kind === "response") {
+          response = true;
+          assert.equal(record.payload.code, "submission_missing");
+        }
+        if (record.kind === "event") {
+          const event = record.payload
+            .event as import("../web/src/api.js").StreamEvent;
+          if (event.type === "timeline") {
+            ids.push(event.item.messageId!);
+            const value = projectStream(event, ids.length);
+            if (value) projected = appendLiveItem(projected, value, false);
+          }
+        }
+      }
+      assert.deepEqual(ids, ["first", "second", "third"]);
+      assert.equal(projected.length, 3);
+      assert.equal(server.closed, false);
+    } finally {
+      release?.();
+      closeSecureRoom(room.token);
+      deleteRoom(room.token);
+    }
+  },
+);

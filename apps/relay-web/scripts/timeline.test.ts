@@ -81,9 +81,50 @@ test("live assistant chunks are coalesced until a timeline boundary", () => {
       { id: "stream:3", kind: "assistant", text: "A new turn." },
       false,
     ),
-    [
-      ...streamed,
-      { id: "stream:3", kind: "assistant", text: "A new turn." },
-    ],
+    [...streamed, { id: "stream:3", kind: "assistant", text: "A new turn." }],
   );
+});
+
+test("user image metadata upserts exact message IDs without merging identical text or losing assistant fragments", () => {
+  const image = {
+    id: "x".repeat(24),
+    mimeType: "image/png" as const,
+    byteLength: 100,
+    width: 10,
+    height: 10,
+  };
+  const first = projectTimeline([
+    {
+      item: {
+        type: "user_message",
+        text: "[Alice]\nsame",
+        messageId: "first",
+        clientMessageId: "first",
+        roomImages: [image],
+      },
+    },
+    {
+      item: {
+        type: "user_message",
+        text: "[Alice]\nsame",
+        messageId: "second",
+        clientMessageId: "second",
+      },
+    },
+  ]);
+  assert.equal(first.length, 2);
+  assert.equal(first[0].id, "user:first");
+  const partial = {
+    id: "assistant",
+    kind: "assistant" as const,
+    text: "Hello ",
+  };
+  let items = appendLiveItem(first, partial, false);
+  assert.ok(first[0].kind === "user");
+  items = appendLiveItem(items, { ...first[0], images: [image] }, true);
+  assert.equal(items.length, 3);
+  items = appendLiveItem(items, { ...partial, text: "world" }, true);
+  assert.equal(items.length, 3);
+  assert.equal((items[2] as { text: string }).text, "Hello world");
+  assert.deepEqual((items[0] as { images: unknown[] }).images, [image]);
 });
