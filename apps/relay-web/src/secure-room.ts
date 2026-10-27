@@ -49,6 +49,7 @@ const MAX_PENDING_APP_BYTES = MAX_APP_RECORD_BYTES * 2;
 const MAX_REPLAY_IDS = 512;
 const MAX_PENDING_HANDSHAKES_PER_ROOM = 8;
 const HANDSHAKE_TIMEOUT_MS = 10_000;
+export const SECURE_ROOM_OPERATION_TIMEOUT_MS = 15_000;
 
 interface SecureLiveRoom {
   sessionId: string;
@@ -71,6 +72,8 @@ interface SecureClient {
   readBytes: number;
   ready: boolean;
   closed: boolean;
+  work: AbortController;
+  inputLeases: Set<() => void>;
   output: Promise<void>;
   outputCount: number;
   outputBytes: number;
@@ -448,6 +451,34 @@ function broadcastSecure(
   }
 }
 
+function cancelClientWork(client: SecureClient): void {
+  client.work.abort();
+  for (const release of client.inputLeases) release();
+}
+
+async function clientOperation<T>(
+  client: SecureClient,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const signal = client.work.signal;
+  if (signal.aborted || client.closed) throw new Error("room_client_closed");
+  let cancel!: () => void;
+  const canceled = new Promise<never>((_, reject) => {
+    cancel = () => reject(new Error("room_client_closed"));
+  });
+  signal.addEventListener("abort", cancel, { once: true });
+  const deadline = setTimeout(
+    () => client.close(),
+    SECURE_ROOM_OPERATION_TIMEOUT_MS,
+  );
+  try {
+    return await Promise.race([run(signal), canceled]);
+  } finally {
+    clearTimeout(deadline);
+    signal.removeEventListener("abort", cancel);
+  }
+}
+
 async function handleClientRecord(
   live: SecureLiveRoom,
   client: SecureClient,
@@ -458,6 +489,7 @@ async function handleClientRecord(
     room: SecureRoom,
     questionId: string,
     payload: { actionId?: string; answers?: RoomQuestionResponse["answers"] },
+    signal?: AbortSignal,
   ) => Promise<boolean>,
 ): Promise<void> {
   if (record.sessionId !== live.sessionId) {
@@ -554,7 +586,14 @@ async function handleClientRecord(
     if (!checkRateLimit(client.room.token)) return;
     const message = payloadString(record.payload, "message")?.trim() ?? "";
     if (!message) return;
-    await deps.sendToAgent(client.room.agentId, `[${client.name}]\n${message}`);
+    await clientOperation(client, (signal) =>
+      deps.sendToAgent(
+        client.room.agentId,
+        `[${client.name}]\n${message}`,
+        undefined,
+        signal,
+      ),
+    );
     return;
   }
 
@@ -562,14 +601,24 @@ async function handleClientRecord(
   if (!questionId) return;
   if (record.kind === "answer") {
     const actionId = payloadString(record.payload, "actionId");
-    if (actionId) await answerQuestion(client.room, questionId, { actionId });
+    if (actionId)
+      await clientOperation(client, (signal) =>
+        answerQuestion(client.room, questionId, { actionId }, signal),
+      );
     return;
   }
   const answers = payloadAnswers(record.payload);
   if (answers) {
-    await answerQuestion(client.room, questionId, {
-      answers,
-    });
+    await clientOperation(client, (signal) =>
+      answerQuestion(
+        client.room,
+        questionId,
+        {
+          answers,
+        },
+        signal,
+      ),
+    );
   }
 }
 
@@ -581,6 +630,7 @@ export async function openSecureRoomSocket(
     room: SecureRoom,
     questionId: string,
     payload: { actionId?: string; answers?: RoomQuestionResponse["answers"] },
+    signal?: AbortSignal,
   ) => Promise<boolean>,
   deps: SecureRoomDependencies = defaultDependencies,
 ): Promise<boolean> {
@@ -638,6 +688,7 @@ export async function openSecureRoomSocket(
   const removeClient = () => {
     settleAdmission();
     const leaving = client;
+    if (leaving) cancelClientWork(leaving);
     if (!leaving || !live.clients.delete(leaving)) return;
     leaving.closed = true;
     disconnectAttachments(room, leaving.memberId);
@@ -733,6 +784,8 @@ export async function openSecureRoomSocket(
       readBytes: 0,
       ready: false,
       closed: false,
+      work: new AbortController(),
+      inputLeases: new Set(),
       output: Promise.resolve(),
       outputCount: 0,
       outputBytes: 0,
@@ -740,6 +793,7 @@ export async function openSecureRoomSocket(
       initializingBytes: 0,
       close() {
         this.closed = true;
+        cancelClientWork(this);
         channel.close(1000, "closed");
       },
     };
@@ -753,6 +807,7 @@ export async function openSecureRoomSocket(
     let queued = 0;
     let queuedBytes = 0;
     onPlaintext = (next) => {
+      if (activeClient.closed || activeClient.work.signal.aborted) return;
       const bytes = recordByteLength(next);
       if (
         queued >= 4 ||
@@ -772,24 +827,36 @@ export async function openSecureRoomSocket(
       queuedBytes += bytes;
       totalQueuedInputs++;
       totalQueuedBytes += bytes;
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        activeClient.inputLeases.delete(release);
+        queued--;
+        queuedBytes -= bytes;
+        totalQueuedInputs--;
+        totalQueuedBytes -= bytes;
+      };
+      activeClient.inputLeases.add(release);
       input = input
-        .then(() =>
-          handleClientRecord(
+        .then(() => {
+          if (
+            activeClient.closed ||
+            activeClient.work.signal.aborted ||
+            getRoom(room.token) !== room
+          )
+            return;
+          return handleClientRecord(
             live,
             activeClient,
             record,
             checkRateLimit,
             deps,
             answerQuestion,
-          ),
-        )
+          );
+        })
         .catch(() => client?.close())
-        .finally(() => {
-          queued--;
-          queuedBytes -= bytes;
-          totalQueuedInputs--;
-          totalQueuedBytes -= bytes;
-        });
+        .finally(release);
     };
     live.clients.add(client);
     live.presence.join(client, name);

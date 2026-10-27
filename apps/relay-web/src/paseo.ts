@@ -232,7 +232,9 @@ export async function sendToAgent(
   signal?: AbortSignal,
 ): Promise<void> {
   if (signal) {
-    await sendWithIsolatedConnection(agentId, text, options, signal);
+    await withIsolatedConnection(agentId, signal, (agent) =>
+      agent.send(text, options),
+    );
     return;
   }
   const agent = await getAgentHandle(agentId);
@@ -240,12 +242,11 @@ export async function sendToAgent(
 }
 
 /** An abort closes only this dispatch's transport, never room subscriptions. */
-async function sendWithIsolatedConnection(
+async function withIsolatedConnection<T>(
   agentId: string,
-  text: string,
-  options: Parameters<typeof sendToAgent>[2],
   signal: AbortSignal,
-): Promise<void> {
+  operation: (agent: PaseoAgentHandle, checkActive: () => void) => Promise<T>,
+): Promise<T> {
   if (signal.aborted) throw new Error("message_send_aborted");
   const isolated = createPaseoClient({
     url: PASEO_URL,
@@ -273,9 +274,12 @@ async function sendWithIsolatedConnection(
   try {
     // Closing this SDK version does not reject an unresolved connect().
     await Promise.race([isolated.connect(), canceled]);
-    if (signal.aborted || closed) throw new Error("message_send_aborted");
-    await Promise.race([
-      isolated.agents.ref(agentId).send(text, options),
+    const checkActive = () => {
+      if (signal.aborted || closed) throw new Error("message_send_aborted");
+    };
+    checkActive();
+    return await Promise.race([
+      operation(isolated.agents.ref(agentId), checkActive),
       canceled,
     ]);
   } finally {
@@ -322,9 +326,24 @@ export async function answerRoomQuestion(
   agentId: string,
   requestId: string,
   response: { actionId?: unknown; answers?: RoomQuestionResponse["answers"] },
+  signal?: AbortSignal,
 ): Promise<boolean> {
-  const agent = await getAgentHandle(agentId);
+  if (signal) {
+    return withIsolatedConnection(agentId, signal, (agent, checkActive) =>
+      answerWithAgent(agent, requestId, response, checkActive),
+    );
+  }
+  return answerWithAgent(await getAgentHandle(agentId), requestId, response);
+}
+
+async function answerWithAgent(
+  agent: PaseoAgentHandle,
+  requestId: string,
+  response: { actionId?: unknown; answers?: RoomQuestionResponse["answers"] },
+  checkActive: () => void = () => {},
+): Promise<boolean> {
   const snapshot = await agent.refresh();
+  checkActive();
   const request = snapshot?.agent.pendingPermissions.find(
     (pending) => pending.id === requestId,
   );
@@ -335,6 +354,7 @@ export async function answerRoomQuestion(
     ? "allow"
     : roomQuestionActionBehavior(request, actionId);
   if (!behavior) return false;
+  checkActive();
   await agent.respondToPermission({
     requestId,
     response: updatedInput

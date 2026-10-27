@@ -142,13 +142,14 @@ async function answerQuestionOnce(
   room: Pick<Room, "agentId" | "token">,
   requestId: string,
   payload: { actionId?: string; answers?: RoomQuestionResponse["answers"] },
+  signal?: AbortSignal,
 ): Promise<boolean> {
   const key = `${room.token}:${requestId}`;
   if (!checkQuestionRateLimit(room.token)) return false;
   if (answeringQuestions.has(key)) return false;
   answeringQuestions.add(key);
   try {
-    return await answerRoomQuestion(room.agentId, requestId, payload);
+    return await answerRoomQuestion(room.agentId, requestId, payload, signal);
   } finally {
     answeringQuestions.delete(key);
   }
@@ -689,8 +690,8 @@ export async function openAnyRoomSocket(
       requestPath,
       socket,
       checkRateLimit,
-      (room: SecureRoom, questionId, payload) =>
-        answerQuestionOnce(room, questionId, payload),
+      (room: SecureRoom, questionId, payload, signal) =>
+        answerQuestionOnce(room, questionId, payload, signal),
     );
   }
   return openRoomSocket(requestPath, socket);

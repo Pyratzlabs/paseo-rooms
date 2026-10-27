@@ -641,6 +641,7 @@ async function imageTestGuest(
   room: ReturnType<typeof createRoom>,
   deps: SecureRoomDeps,
   name = "Alice",
+  answerQuestion: AnswerQuestion = async () => true,
 ) {
   const [server, browser] = socketPair(),
     received = receivedRecords();
@@ -648,7 +649,7 @@ async function imageTestGuest(
     `/v2/rooms/${room.token}/ws`,
     server,
     () => true,
-    async () => true,
+    answerQuestion,
     deps,
   );
   const channel = await createClientChannel(
@@ -1155,6 +1156,378 @@ test(
       assert.equal(server.closed, false);
     } finally {
       release?.();
+      closeSecureRoom(room.token);
+      deleteRoom(room.token);
+    }
+  },
+);
+
+test(
+  "disconnecting hung text and question operations releases queued input capacity for healthy rooms",
+  { timeout: 8000 },
+  async () => {
+    const room = createRoom("agent", "hung records"),
+      healthyRoom = createRoom("healthy", "healthy records");
+    try {
+      for (const kind of ["message", "answer"] as const) {
+        const fake = fakeDependencies();
+        let calls = 0;
+        const signals: Array<AbortSignal | undefined> = [];
+        fake.deps.sendToAgent = async (_id, _text, _options, signal) => {
+          calls++;
+          signals.push(signal);
+          await new Promise<void>(() => {});
+        };
+        const answer: AnswerQuestion = async (_room, _id, _payload, signal) => {
+          calls++;
+          signals.push(signal);
+          return new Promise<boolean>(() => {});
+        };
+        for (let index = 0; index < 40; index++) {
+          const guest = await imageTestGuest(room, fake.deps, "Guest", answer);
+          for (let seq = 1; seq <= 4; seq++)
+            await guest.channel.send(
+              encoder.encode(
+                JSON.stringify({
+                  v: 2,
+                  sessionId: guest.welcome.sessionId,
+                  seq,
+                  id: crypto.randomUUID(),
+                  kind,
+                  payload:
+                    kind === "message"
+                      ? { message: `record ${seq}` }
+                      : { questionId: "question", actionId: "yes" },
+                }),
+              ).buffer,
+            );
+          await waitFor(() => calls === index + 1);
+          await new Promise((resolve) => setImmediate(resolve));
+          guest.channel.close();
+        }
+        assert.equal(
+          calls,
+          40,
+          "queued records behind a disconnected operation must never reach SDK",
+        );
+        assert.ok(
+          signals.every((signal) => signal?.aborted),
+          "executing SDK operations must be canceled",
+        );
+        const healthy = await imageTestGuest(
+          healthyRoom,
+          fakeDependencies().deps,
+        );
+        const response = await healthy.request("submission_status", {
+          submissionKey: "s".repeat(24),
+        });
+        assert.equal(response.code, "submission_missing");
+        healthy.channel.close();
+      }
+    } finally {
+      closeSecureRoom(room.token);
+      closeSecureRoom(healthyRoom.token);
+      deleteRoom(room.token);
+      deleteRoom(healthyRoom.token);
+    }
+  },
+);
+
+async function queueClientRecords(
+  guest: Awaited<ReturnType<typeof imageTestGuest>>,
+  kind: "message" | "answer",
+  count = 4,
+) {
+  for (let seq = 1; seq <= count; seq++)
+    await guest.channel.send(
+      encoder.encode(
+        JSON.stringify({
+          v: 2,
+          sessionId: guest.welcome.sessionId,
+          seq,
+          id: crypto.randomUUID(),
+          kind,
+          payload:
+            kind === "message"
+              ? { message: `record ${seq}` }
+              : { questionId: "question", actionId: "yes" },
+        }),
+      ).buffer,
+    );
+}
+
+test(
+  "text and question operation deadlines cancel execution, close queued work and restore healthy input",
+  { timeout: 5000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const { SECURE_ROOM_OPERATION_TIMEOUT_MS } =
+      await import("../src/secure-room.js");
+    const room = createRoom("agent", "deadlines"),
+      other = createRoom("other", "after deadlines");
+    try {
+      for (const kind of ["message", "answer"] as const) {
+        const fake = fakeDependencies();
+        let calls = 0;
+        let operationSignal: AbortSignal | undefined;
+        fake.deps.sendToAgent = async (_id, _text, _options, signal) => {
+          calls++;
+          operationSignal = signal;
+          await new Promise<void>(() => {});
+        };
+        const answer: AnswerQuestion = async (_room, _id, _payload, signal) => {
+          calls++;
+          operationSignal = signal;
+          return new Promise<boolean>(() => {});
+        };
+        const guest = await imageTestGuest(room, fake.deps, "Guest", answer);
+        await queueClientRecords(guest, kind);
+        await waitFor(() => calls === 1);
+        await new Promise((resolve) => setImmediate(resolve));
+        t.mock.timers.tick(SECURE_ROOM_OPERATION_TIMEOUT_MS);
+        assert.equal(guest.server.closed, true);
+        assert.equal(operationSignal?.aborted, true);
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(calls, 1);
+        const healthy = await imageTestGuest(other, fakeDependencies().deps);
+        assert.equal(
+          (
+            await healthy.request("submission_status", {
+              submissionKey: "s".repeat(24),
+            })
+          ).code,
+          "submission_missing",
+        );
+        healthy.channel.close();
+      }
+    } finally {
+      closeSecureRoom(room.token);
+      closeSecureRoom(other.token);
+      deleteRoom(room.token);
+      deleteRoom(other.token);
+    }
+  },
+);
+
+test(
+  "late canceled SDK completion cannot release another connection's full input reservation",
+  { timeout: 8000 },
+  async () => {
+    const oldRoom = createRoom("old", "old input"),
+      rooms = Array.from({ length: 33 }, (_, index) =>
+        createRoom(`new-${index}`, `new ${index}`),
+      );
+    const guests: Array<Awaited<ReturnType<typeof imageTestGuest>>> = [];
+    let resolveOld!: () => void;
+    try {
+      const oldFake = fakeDependencies();
+      oldFake.deps.sendToAgent = () =>
+        new Promise<void>((resolve) => {
+          resolveOld = resolve;
+        });
+      const old = await imageTestGuest(oldRoom, oldFake.deps);
+      await queueClientRecords(old, "message");
+      await waitFor(() => Boolean(resolveOld));
+      old.channel.close();
+      deleteRoom(oldRoom.token);
+      const busy = fakeDependencies();
+      let calls = 0;
+      busy.deps.sendToAgent = async () => {
+        calls++;
+        await new Promise<void>(() => {});
+      };
+      for (let index = 0; index < 32; index++) {
+        const guest = await imageTestGuest(rooms[index], busy.deps);
+        guests.push(guest);
+        await queueClientRecords(guest, "message");
+        await waitFor(() => calls === index + 1);
+      }
+      resolveOld();
+      await new Promise((resolve) => setImmediate(resolve));
+      const blocked = await imageTestGuest(rooms[32], busy.deps);
+      guests.push(blocked);
+      await queueClientRecords(blocked, "message", 1).catch(() => {});
+      await waitFor(() => blocked.server.closed);
+      assert.equal(
+        calls,
+        32,
+        "late release must not undercount 128 live reservations",
+      );
+    } finally {
+      resolveOld?.();
+      for (const guest of guests) guest.channel.close();
+      closeSecureRoom(oldRoom.token);
+      deleteRoom(oldRoom.token);
+      for (const room of rooms) {
+        closeSecureRoom(room.token);
+        deleteRoom(room.token);
+      }
+    }
+  },
+);
+
+test(
+  "disconnect releases the byte budget before the record-count budget is reached",
+  { timeout: 8000 },
+  async () => {
+    const room = createRoom("agent", "byte leases"),
+      other = createRoom("other", "healthy byte leases");
+    const fake = fakeDependencies();
+    let calls = 0;
+    fake.deps.sendToAgent = async () => {
+      calls++;
+      await new Promise<void>(() => {});
+    };
+    try {
+      for (let index = 0; index < 40; index++) {
+        const guest = await imageTestGuest(room, fake.deps);
+        for (let seq = 1; seq <= 2; seq++)
+          await guest.channel.send(
+            encoder.encode(
+              JSON.stringify({
+                v: 2,
+                sessionId: guest.welcome.sessionId,
+                seq,
+                id: crypto.randomUUID(),
+                kind: "message",
+                payload: { message: "x".repeat(60 * 1024) },
+              }),
+            ).buffer,
+          );
+        await waitFor(() => calls === index + 1);
+        await new Promise((resolve) => setImmediate(resolve));
+        guest.channel.close();
+      }
+      assert.equal(
+        calls,
+        40,
+        "only the first large record from each disconnected client executes",
+      );
+      // Eighty records remain below the 128-record cap, while their cumulative
+      // serialized payload exceeds 4 MiB. This independently exercises byte leases.
+      const healthy = await imageTestGuest(other, fakeDependencies().deps);
+      assert.equal(
+        (
+          await healthy.request("submission_status", {
+            submissionKey: "s".repeat(24),
+          })
+        ).code,
+        "submission_missing",
+      );
+      healthy.channel.close();
+    } finally {
+      closeSecureRoom(room.token);
+      closeSecureRoom(other.token);
+      deleteRoom(room.token);
+      deleteRoom(other.token);
+    }
+  },
+);
+
+test(
+  "disconnecting the uploader keeps a committed image dispatch room-owned until late SDK acceptance",
+  { timeout: 5000 },
+  async () => {
+    const room = createRoom("agent", "room-owned dispatch"),
+      fake = fakeDependencies();
+    const { readFileSync } = await import("node:fs");
+    const bytes = readFileSync(
+      new URL("./fixtures/room-images/fixture.png", import.meta.url),
+    );
+    let complete!: () => void;
+    let operationSignal: AbortSignal | undefined;
+    let calls = 0;
+    let subscriber: Parameters<SecureRoomDeps["subscribeAgent"]>[1] | null =
+      null;
+    const history: Awaited<ReturnType<SecureRoomDeps["fetchFullHistory"]>> = [];
+    fake.deps.fetchFullHistory = async () => history;
+    fake.deps.subscribeAgent = async (_id, handler) => {
+      subscriber = handler;
+      return () => {
+        subscriber = null;
+      };
+    };
+    fake.deps.sendToAgent = async (_id, text, options, signal) => {
+      calls++;
+      operationSignal = signal;
+      await new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const item = {
+        type: "user_message" as const,
+        text,
+        messageId: options!.messageId,
+        clientMessageId: options!.messageId,
+      };
+      history.push({ item, timestamp: "2026-10-27T00:00:00Z" });
+      subscriber?.({
+        agentId: "agent",
+        timestamp: "2026-10-27T00:00:00Z",
+        event: { type: "timeline", provider: "mock", item },
+      });
+    };
+    try {
+      const uploader = await imageTestGuest(room, fake.deps);
+      const begin = await uploader.request("image_begin", {
+        mimeType: "image/png",
+        byteLength: bytes.length,
+      });
+      assert.equal(begin.ok, true);
+      const auth = begin.value as { imageId: string; capability: string };
+      await uploader.request("image_chunk", {
+        ...auth,
+        offset: 0,
+        data: bytes.toString("base64"),
+      });
+      await uploader.request("image_finish", auth);
+      const submissionKey = crypto.randomUUID().replaceAll("-", "");
+      const payload = { ...auth, message: "pending image", submissionKey };
+      void uploader.request("message", payload);
+      await waitFor(() => Boolean(complete));
+      assert.ok(operationSignal);
+      uploader.channel.close();
+      assert.equal(
+        operationSignal.aborted,
+        false,
+        "client cancellation must not abort committed room dispatch",
+      );
+      const observer = await imageTestGuest(room, fake.deps, "Observer");
+      assert.equal(
+        (
+          (await observer.request("submission_status", { submissionKey }))
+            .value as { status: string }
+        ).status,
+        "pending",
+      );
+      complete();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(
+        (
+          (await observer.request("submission_status", { submissionKey }))
+            .value as { status: string }
+        ).status,
+        "accepted",
+      );
+      assert.equal(operationSignal.aborted, false);
+      assert.equal((await observer.request("message", payload)).ok, true);
+      assert.equal(calls, 1);
+      observer.channel.close();
+      const rejoined = await imageTestGuest(room, fake.deps, "Rejoined");
+      const entries = rejoined.welcome.payload.history as Array<{
+        item: { roomImages: Array<{ id: string }> };
+      }>;
+      assert.equal(entries[0].item.roomImages[0].id, auth.imageId);
+      const downloaded = await rejoined.request("image_read", {
+        imageId: auth.imageId,
+        offset: 0,
+      });
+      assert.deepEqual(
+        Buffer.from((downloaded.value as { data: string }).data, "base64"),
+        bytes,
+      );
+      rejoined.channel.close();
+    } finally {
+      complete?.();
       closeSecureRoom(room.token);
       deleteRoom(room.token);
     }

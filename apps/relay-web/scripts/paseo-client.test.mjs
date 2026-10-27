@@ -7,7 +7,7 @@ import test from "node:test";
 const bundle = await build({
   stdin: {
     contents:
-      'export * from "./paseo.ts"; export { calls, clearPending, instances, deferConnection, dispatchBehavior } from "@getpaseo/client";',
+      'export * from "./paseo.ts"; export { calls, clearPending, instances, deferConnection, dispatchBehavior, restorePending } from "@getpaseo/client";',
     resolveDir: new URL("../src/", import.meta.url).pathname,
     loader: "ts",
   },
@@ -30,31 +30,34 @@ const bundle = await build({
           export const calls = [];
           export const instances = [];
           let deferred = false;
-          let deferredSend = false, deferredClose = false;
-          export function dispatchBehavior({ connect = false, send = false, close = false } = {}) { deferred = connect; deferredSend = send; deferredClose = close; }
+          let deferredSend = false, deferredClose = false, deferredRefresh = false, deferredPermission = false;
+          export function dispatchBehavior({ connect = false, send = false, close = false, refresh = false, permission = false } = {}) { deferred = connect; deferredSend = send; deferredClose = close; deferredRefresh = refresh; deferredPermission = permission; }
           export function deferConnection() { deferred = true; }
           export let pending = [{ id: "question", kind: "question", title: "Choose", actions: [{ id: "yes", label: "Yes", behavior: "allow" }] }];
           export function createPaseoClient(config) {
             calls.push("create");
             // SDK close stops transport retries without settling connect().
-            let releaseConnection, accept;
+            let releaseConnection, accept, finishRefresh, finishPermission;
             const connection = deferred ? new Promise(resolve => { releaseConnection = resolve; }) : Promise.resolve();
             const delivery = deferredSend ? new Promise(resolve => { accept = resolve; }) : Promise.resolve();
             const stallClose = deferredClose;
-            const instance = { config, sendCount: 0, releaseConnection: () => releaseConnection?.(), accept: () => accept?.(), closed: false, connect: () => connection, close: async () => {
+            const refreshReply = deferredRefresh ? new Promise(resolve => { finishRefresh = resolve; }) : Promise.resolve();
+            const permissionReply = deferredPermission ? new Promise(resolve => { finishPermission = resolve; }) : Promise.resolve();
+            const instance = { config, sendCount: 0, permissionCount: 0, refreshCount: 0, finishRefresh: () => finishRefresh?.(), finishPermission: () => finishPermission?.(), releaseConnection: () => releaseConnection?.(), accept: () => accept?.(), closed: false, connect: () => connection, close: async () => {
               if (instance.closed) return;
               instance.closed = true;
               calls.push("close");
               if (stallClose) await new Promise(() => {});
             }, agents: { ref: () => ({
-              refresh: async () => ({ agent: { pendingPermissions: pending } }),
+              refresh: async () => { instance.refreshCount++; await refreshReply; return { agent: { pendingPermissions: pending } }; },
               send: async (text, options) => { instance.sendCount++; calls.push({ text, options }); await delivery; },
-              respondToPermission: async (options) => { calls.push(options); }
+              respondToPermission: async (options) => { instance.permissionCount++; calls.push(options); await permissionReply; }
             }) } };
             instances.push(instance);
             return instance;
           }
           export function clearPending() { pending = []; }
+          export function restorePending() { pending = [{ id: "question", kind: "question", title: "Choose", actions: [{ id: "yes", label: "Yes", behavior: "allow" }] }]; }
         `
               : `export class DaemonClient { constructor() { throw new Error("Internal permission client must not be used"); } }`,
           loader: "js",
@@ -198,6 +201,64 @@ test("abort and managed shutdown cancel pending private SDK sends without waitin
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal(isolated.sendCount, 1);
     }
+  } finally {
+    adapter.dispatchBehavior();
+    await adapter.closePaseoConnections();
+  }
+});
+
+test("question cancellation owns a private client and late refresh cannot mutate permissions", async () => {
+  adapter.restorePending();
+  await adapter.getAgentHandle("agent");
+  const shared = adapter.instances.at(-1);
+  adapter.dispatchBehavior({ refresh: true, close: true });
+  const controller = new AbortController();
+  try {
+    const answering = adapter.answerRoomQuestion(
+      "agent",
+      "question",
+      { actionId: "yes" },
+      controller.signal,
+    );
+    const rejected = assert.rejects(answering, /message_send_aborted/);
+    await new Promise((resolve) => setImmediate(resolve));
+    const isolated = adapter.instances.at(-1);
+    assert.notEqual(isolated, shared);
+    assert.equal(isolated.refreshCount, 1);
+    controller.abort();
+    await rejected;
+    isolated.finishRefresh();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(isolated.permissionCount, 0);
+    assert.equal(isolated.closed, true);
+    assert.equal(shared.closed, false);
+  } finally {
+    adapter.dispatchBehavior();
+    await adapter.closePaseoConnections();
+  }
+});
+
+test("aborting a pending permission response settles without waiting for SDK completion", async () => {
+  adapter.restorePending();
+  adapter.dispatchBehavior({ permission: true, close: true });
+  const controller = new AbortController();
+  try {
+    const answering = adapter.answerRoomQuestion(
+      "agent",
+      "question",
+      { actionId: "yes" },
+      controller.signal,
+    );
+    const rejected = assert.rejects(answering, /message_send_aborted/);
+    await new Promise((resolve) => setImmediate(resolve));
+    const isolated = adapter.instances.at(-1);
+    assert.equal(isolated.permissionCount, 1);
+    controller.abort();
+    await rejected;
+    assert.equal(isolated.closed, true);
+    isolated.finishPermission();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(isolated.permissionCount, 1);
   } finally {
     adapter.dispatchBehavior();
     await adapter.closePaseoConnections();
