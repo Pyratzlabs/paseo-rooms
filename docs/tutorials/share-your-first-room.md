@@ -36,6 +36,8 @@ The original image bytes are forwarded to the agent. Everyone in this room can s
 
 Uploads show progress and the draft clears when delivery is confirmed. If delivery is uncertain, use **Check delivery** to look up the original attempt without sending it again. **Discard draft** lets you continue chatting; sending the same image as a new message could duplicate an earlier delivery. A daemon rejection whose delivery cannot be determined is also treated as uncertain.
 
+A delivery timeout closes that attempt's connection and releases its sending capacity. An input already dispatched to the daemon may still take effect, so cancellation does not make resending safe.
+
 Room images live in the host's memory while that encrypted room exists, including when everyone disconnects or the managed listener stops and starts in the same process. Revoking the room or restarting the host process removes them. A room can retain up to 32 MiB and 128 images; the host has a shared 128 MiB / 512-image limit. If the room is full, ask the host to create a new room. These limits include uploads in progress. Images never use a public media URL or the legacy HTTP message API.
 
 ## End access

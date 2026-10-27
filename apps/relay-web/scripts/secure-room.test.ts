@@ -728,7 +728,8 @@ test(
         subscriber = null;
       };
     };
-    fake.deps.sendToAgent = async (_id, text, options) => {
+    fake.deps.sendToAgent = async (_id, text, options, signal) => {
+      assert.ok(signal instanceof AbortSignal);
       sends++;
       assert.equal(text, "[Alice]\n");
       assert.deepEqual(Buffer.from(options!.images![0].data, "base64"), bytes);

@@ -525,8 +525,8 @@ async function handleClientRecord(
             client.name,
             record.payload,
             () => checkRateLimit(client.room.token),
-            (text, options) =>
-              deps.sendToAgent(client.room.agentId, text, options),
+            (text, options, signal) =>
+              deps.sendToAgent(client.room.agentId, text, options, signal),
           );
       }
       if (!client.closed)

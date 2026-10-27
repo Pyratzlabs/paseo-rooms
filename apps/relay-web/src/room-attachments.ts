@@ -47,7 +47,7 @@ interface State {
   assets: Map<string, Asset>;
   receipts: Map<string, Receipt>;
   associations: Map<string, string>;
-  sending: boolean;
+  dispatch: { cancel(): void } | null;
 }
 const states = new Map<string, State>();
 let totalBytes = 0,
@@ -69,7 +69,7 @@ function state(room: SecureRoom): State {
       assets: new Map(),
       receipts: new Map(),
       associations: new Map(),
-      sending: false,
+      dispatch: null,
     };
     states.set(room.token, value);
   }
@@ -121,6 +121,7 @@ export function deleteRoomAttachments(token: string): void {
   const s = states.get(token);
   if (!s) return;
   s.alive = false;
+  s.dispatch?.cancel();
   for (const a of s.assets.values()) release(s, a);
   totalReceipts -= s.receipts.size;
   s.receipts.clear();
@@ -309,6 +310,7 @@ export async function submitRoomMessage(
       messageId: string;
       images?: Array<{ data: string; mimeType: string }>;
     },
+    signal: AbortSignal,
   ) => Promise<void>,
 ): Promise<SubmissionReceipt> {
   const s = state(room);
@@ -333,7 +335,7 @@ export async function submitRoomMessage(
     if (prior.fingerprint !== fingerprint) error("submission_changed");
     return publicReceipt(prior);
   }
-  if (s.sending || activeSends >= 2) error("send_busy");
+  if (s.dispatch || activeSends >= 2) error("send_busy");
   if (
     s.receipts.size >= ATTACHMENT_LIMITS.roomReceipts ||
     totalReceipts >= ATTACHMENT_LIMITS.globalReceipts
@@ -351,35 +353,58 @@ export async function submitRoomMessage(
   };
   s.receipts.set(r.submissionKey, r);
   totalReceipts++;
-  s.sending = true;
   activeSends++;
   if (a) {
     a.committed = true;
     s.associations.set(r.messageId, a.image.id);
   }
   let timeout: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<void>((resolve) => {
-    timeout = setTimeout(() => {
-      if (s.alive && r.status === "pending") r.status = "unknown";
-      resolve();
-    }, ATTACHMENT_LIMITS.sendMs);
+  const controller = new AbortController();
+  let released = false;
+  let finishCancellation!: () => void;
+  const canceled = new Promise<void>((resolve) => {
+    finishCancellation = resolve;
   });
+  const releaseDispatch = () => {
+    if (released) return;
+    released = true;
+    if (timeout) clearTimeout(timeout);
+    if (s.dispatch === dispatch) s.dispatch = null;
+    activeSends--;
+  };
+  const dispatch = {
+    cancel() {
+      if (released) return;
+      if (s.alive && r.status === "pending") r.status = "unknown";
+      // Production send owns an isolated SDK client and closes its transport
+      // on abort. Capacity can recover without orphaning shared-client RPCs.
+      controller.abort();
+      releaseDispatch();
+      finishCancellation();
+    },
+  };
+  s.dispatch = dispatch;
+  timeout = setTimeout(() => dispatch.cancel(), ATTACHMENT_LIMITS.sendMs);
   const dispatched = Promise.resolve()
     .then(() => {
-      if (!s.alive) error("room_closed");
-      return send(`[${name}]\n${message}`, {
-        messageId: r.messageId,
-        ...(a
-          ? {
-              images: [
-                {
-                  data: a.bytes.toString("base64"),
-                  mimeType: a.image.mimeType,
-                },
-              ],
-            }
-          : {}),
-      });
+      if (!s.alive || controller.signal.aborted) error("room_closed");
+      return send(
+        `[${name}]\n${message}`,
+        {
+          messageId: r.messageId,
+          ...(a
+            ? {
+                images: [
+                  {
+                    data: a.bytes.toString("base64"),
+                    mimeType: a.image.mimeType,
+                  },
+                ],
+              }
+            : {}),
+        },
+        controller.signal,
+      );
     })
     .then(
       () => {
@@ -402,12 +427,8 @@ export async function submitRoomMessage(
         } else r.status = "unknown";
       },
     )
-    .finally(() => {
-      if (timeout) clearTimeout(timeout);
-      s.sending = false;
-      activeSends--;
-    });
-  await Promise.race([dispatched, deadline]);
+    .finally(releaseDispatch);
+  await Promise.race([dispatched, canceled]);
   if (!s.alive) error("room_closed");
   return publicReceipt(r);
 }

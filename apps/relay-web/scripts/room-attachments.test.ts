@@ -353,3 +353,257 @@ test("revocation during SDK dispatch prevents late store resurrection", async ()
   finish();
   await assert.rejects(pending, /room_closed/);
 });
+
+function submission(room: ReturnType<typeof createRoom>) {
+  const image = upload(room, "alice");
+  return {
+    message: "image",
+    submissionKey: id(),
+    imageId: image.image.id,
+    capability: image.capability,
+  };
+}
+const flushDispatch = () =>
+  new Promise<void>((resolve) => setImmediate(resolve));
+
+test("timeouts abort never-settling SDK sends and restore both room and global capacity without retrying unknown submissions", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const rooms = Array.from({ length: 3 }, (_, index) =>
+    createRoom("agent", `timeout ${index}`),
+  );
+  const payloads = rooms.map(submission);
+  const signals: AbortSignal[] = [];
+  let calls = 0;
+  try {
+    const stuck = rooms.slice(0, 2).map((room, index) =>
+      submitRoomMessage(
+        room,
+        "alice",
+        "Alice",
+        payloads[index],
+        () => true,
+        (_text, _options, signal: AbortSignal) => {
+          calls++;
+          signals.push(signal);
+          return new Promise<void>(() => {});
+        },
+      ),
+    );
+    await flushDispatch();
+    t.mock.timers.tick(ATTACHMENT_LIMITS.sendMs);
+    assert.deepEqual(
+      (await Promise.all(stuck)).map((value) => value.status),
+      ["unknown", "unknown"],
+    );
+    const healthy = await submitRoomMessage(
+      rooms[2],
+      "alice",
+      "Alice",
+      payloads[2],
+      () => true,
+      async () => {},
+    );
+    assert.equal(healthy.status, "accepted");
+    assert.ok(signals.every((signal) => signal.aborted));
+    const repeat = await submitRoomMessage(
+      rooms[0],
+      "new-connection",
+      "Alice",
+      payloads[0],
+      () => true,
+      async () => {
+        calls++;
+      },
+    );
+    assert.equal(repeat.status, "unknown");
+    assert.equal(calls, 2);
+    assert.equal(
+      (
+        await submitRoomMessage(
+          rooms[0],
+          "alice",
+          "Alice",
+          submission(rooms[0]),
+          () => true,
+          async () => {},
+        )
+      ).status,
+      "accepted",
+    );
+  } finally {
+    for (const room of rooms) deleteRoom(room.token);
+  }
+});
+
+test("revoking never-settling dispatches aborts them immediately and restores global capacity", async () => {
+  const rooms = Array.from({ length: 3 }, (_, index) =>
+    createRoom("agent", `revoke ${index}`),
+  );
+  const signals: AbortSignal[] = [];
+  try {
+    const stuck = rooms.slice(0, 2).map((room) =>
+      submitRoomMessage(
+        room,
+        "alice",
+        "Alice",
+        submission(room),
+        () => true,
+        (_text, _options, signal: AbortSignal) => {
+          signals.push(signal);
+          return new Promise<void>(() => {});
+        },
+      ),
+    );
+    const rejected = stuck.map((value) => assert.rejects(value, /room_closed/));
+    await flushDispatch();
+    deleteRoom(rooms[0].token);
+    deleteRoom(rooms[1].token);
+    assert.equal(
+      (
+        await submitRoomMessage(
+          rooms[2],
+          "alice",
+          "Alice",
+          submission(rooms[2]),
+          () => true,
+          async () => {},
+        )
+      ).status,
+      "accepted",
+    );
+    await Promise.all(rejected);
+    assert.ok(signals.every((signal) => signal.aborted));
+  } finally {
+    for (const room of rooms) deleteRoom(room.token);
+  }
+});
+
+test("late SDK settlement cannot double-release a replacement dispatch or downgrade exact echo acceptance", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const rooms = Array.from({ length: 5 }, (_, index) =>
+    createRoom("agent", `late ${index}`),
+  );
+  let acceptOld!: () => void,
+    rejectOld!: (cause: Error) => void,
+    acceptNewA!: () => void,
+    acceptNewB!: () => void;
+  try {
+    const payloadA = submission(rooms[0]),
+      payloadB = submission(rooms[1]);
+    const oldA = submitRoomMessage(
+      rooms[0],
+      "alice",
+      "Alice",
+      payloadA,
+      () => true,
+      () =>
+        new Promise<void>((resolve) => {
+          acceptOld = resolve;
+        }),
+    );
+    const oldB = submitRoomMessage(
+      rooms[1],
+      "alice",
+      "Alice",
+      payloadB,
+      () => true,
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectOld = reject;
+        }),
+    );
+    await flushDispatch();
+    t.mock.timers.tick(ATTACHMENT_LIMITS.sendMs);
+    await Promise.all([oldA, oldB]);
+    decorateRoomItem(rooms[1], {
+      type: "user_message",
+      text: "image",
+      clientMessageId: submissionStatus(rooms[1], payloadB.submissionKey)
+        .messageId,
+    });
+    const newA = submitRoomMessage(
+      rooms[0],
+      "alice",
+      "Alice",
+      submission(rooms[0]),
+      () => true,
+      () =>
+        new Promise<void>((resolve) => {
+          acceptNewA = resolve;
+        }),
+    );
+    const newB = submitRoomMessage(
+      rooms[2],
+      "alice",
+      "Alice",
+      submission(rooms[2]),
+      () => true,
+      () =>
+        new Promise<void>((resolve) => {
+          acceptNewB = resolve;
+        }),
+    );
+    const newRejected = assert.rejects(newA, /room_closed/);
+    await flushDispatch();
+    acceptOld();
+    rejectOld(new Error("sendAgentMessage rejected"));
+    await flushDispatch();
+    assert.equal(
+      submissionStatus(rooms[0], payloadA.submissionKey).status,
+      "accepted",
+    );
+    assert.equal(
+      submissionStatus(rooms[1], payloadB.submissionKey).status,
+      "accepted",
+    );
+    const waitingPayload = submission(rooms[3]);
+    await assert.rejects(
+      submitRoomMessage(
+        rooms[3],
+        "alice",
+        "Alice",
+        waitingPayload,
+        () => true,
+        async () => {},
+      ),
+      /send_busy/,
+    );
+    deleteRoom(rooms[0].token);
+    await newRejected;
+    assert.equal(
+      (
+        await submitRoomMessage(
+          rooms[3],
+          "alice",
+          "Alice",
+          waitingPayload,
+          () => true,
+          async () => {},
+        )
+      ).status,
+      "accepted",
+    );
+    acceptNewA();
+    acceptNewB();
+    await newB;
+    assert.equal(
+      (
+        await submitRoomMessage(
+          rooms[4],
+          "alice",
+          "Alice",
+          submission(rooms[4]),
+          () => true,
+          async () => {},
+        )
+      ).status,
+      "accepted",
+    );
+  } finally {
+    acceptOld?.();
+    rejectOld?.(new Error("closed"));
+    acceptNewA?.();
+    acceptNewB?.();
+    for (const room of rooms) deleteRoom(room.token);
+  }
+});

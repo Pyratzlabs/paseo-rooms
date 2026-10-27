@@ -18,6 +18,7 @@ const PASEO_PASSWORD = process.env.PASEO_PASSWORD;
 let client: PaseoClient | null = null;
 let connecting: Promise<PaseoClient> | null = null;
 const pendingConnections = new Map<PaseoClient, () => void>();
+const dispatchConnections = new Map<PaseoClient, () => void>();
 let connectionEpoch = 0;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let retryWake: (() => void) | null = null;
@@ -84,6 +85,8 @@ export async function closePaseoConnections(): Promise<void> {
   retryWake = null;
 
   const clientsToClose = new Set(pendingConnections.keys());
+  for (const cancel of dispatchConnections.values()) cancel();
+  dispatchConnections.clear();
   if (client) clientsToClose.add(client);
   for (const cancel of pendingConnections.values()) cancel();
   pendingConnections.clear();
@@ -226,9 +229,60 @@ export async function sendToAgent(
     messageId: string;
     images?: Array<{ data: string; mimeType: string }>;
   },
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal) {
+    await sendWithIsolatedConnection(agentId, text, options, signal);
+    return;
+  }
   const agent = await getAgentHandle(agentId);
   await agent.send(text, options);
+}
+
+/** An abort closes only this dispatch's transport, never room subscriptions. */
+async function sendWithIsolatedConnection(
+  agentId: string,
+  text: string,
+  options: Parameters<typeof sendToAgent>[2],
+  signal: AbortSignal,
+): Promise<void> {
+  if (signal.aborted) throw new Error("message_send_aborted");
+  const isolated = createPaseoClient({
+    url: PASEO_URL,
+    password: PASEO_PASSWORD,
+    reconnect: { enabled: false },
+  });
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    // SDK close disposes the transport and RPC waiters, but connect()/cleanup
+    // promises need not settle. Never let them hold the cancellation boundary.
+    void closeQuietly(isolated);
+  };
+  let rejectCancellation!: (error: Error) => void;
+  const canceled = new Promise<never>((_, reject) => {
+    rejectCancellation = reject;
+  });
+  const cancel = () => {
+    close();
+    rejectCancellation(new Error("message_send_aborted"));
+  };
+  signal.addEventListener("abort", cancel, { once: true });
+  dispatchConnections.set(isolated, cancel);
+  try {
+    // Closing this SDK version does not reject an unresolved connect().
+    await Promise.race([isolated.connect(), canceled]);
+    if (signal.aborted || closed) throw new Error("message_send_aborted");
+    await Promise.race([
+      isolated.agents.ref(agentId).send(text, options),
+      canceled,
+    ]);
+  } finally {
+    signal.removeEventListener("abort", cancel);
+    dispatchConnections.delete(isolated);
+    close();
+  }
 }
 
 export async function agentInfo(agentId: string): Promise<{
