@@ -150,6 +150,8 @@ export interface RelayClientOptions extends RelayClientHooks {
   /** Backoff bounds; overridable so tests do not wait seconds. */
   minBackoffMs?: number;
   maxBackoffMs?: number;
+  /** Maximum silence between relay pings (normally sent every 30 seconds). */
+  heartbeatTimeoutMs?: number;
   log?: (line: string) => void;
 }
 
@@ -180,12 +182,24 @@ export interface RelayClient {
 export function startRelayClient(options: RelayClientOptions): RelayClient {
   const minBackoff = options.minBackoffMs ?? 1_000;
   const maxBackoff = options.maxBackoffMs ?? 30_000;
+  const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? 90_000;
+  if (
+    !Number.isSafeInteger(heartbeatTimeoutMs) ||
+    heartbeatTimeoutMs <= 0 ||
+    heartbeatTimeoutMs > 2_147_483_647
+  )
+    throw new Error("invalid relay heartbeat timeout");
   const log = options.log ?? ((line: string) => console.log(line));
 
   let ws: WebSocket | null = null;
   let stopped = false;
   let backoff = minBackoff;
   let retryTimer: NodeJS.Timeout | null = null;
+  let heartbeatTimer: NodeJS.Timeout | null = null;
+  function clearHeartbeat(): void {
+    if (heartbeatTimer) clearTimeout(heartbeatTimer);
+    heartbeatTimer = null;
+  }
   const connectionWaiters = new Set<{
     resolve(): void;
     reject(error: Error): void;
@@ -407,6 +421,8 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     if (stopped) return;
     const socket = new WebSocket(options.url, {
       headers: options.key ? { "x-relay-key": options.key } : {},
+      // A black-holed reconnect must not remain in CONNECTING indefinitely.
+      handshakeTimeout: heartbeatTimeoutMs,
     });
     ws = socket;
     const output = new RelayOutbound(socket, (error) => {
@@ -415,7 +431,22 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     });
     outbound = output;
 
+    const awaitHeartbeat = (): void => {
+      clearHeartbeat();
+      heartbeatTimer = setTimeout(() => {
+        heartbeatTimer = null;
+        if (stopped || socket !== ws) return;
+        log("[relay-client] heartbeat timed out; terminating stale connection");
+        // A graceful close also waits on the broken network. Termination emits
+        // close locally, which runs the existing cleanup/re-registration path.
+        socket.terminate();
+      }, heartbeatTimeoutMs);
+      heartbeatTimer.unref?.();
+    };
+
     socket.on("open", () => {
+      if (stopped || socket !== ws) return;
+      awaitHeartbeat();
       backoff = minBackoff;
       resolveConnectionWaiters();
       const snapshot = options.currentRoutes?.() ?? [];
@@ -447,6 +478,7 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
 
       switch (frame.type) {
         case "ping":
+          awaitHeartbeat();
           send({ v: 1, type: "pong", t: frame.t });
           break;
 
@@ -555,6 +587,7 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
 
     const reconnect = (): void => {
       if (socket !== ws) return; // superseded
+      clearHeartbeat();
       output.close();
       outbound = null;
       ws = null;
@@ -685,6 +718,7 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     connected: () => ws !== null && ws.readyState === WebSocket.OPEN,
     close: () => {
       stopped = true;
+      clearHeartbeat();
       clearRouteRetries();
       if (retryTimer) clearTimeout(retryTimer);
       rejectConnectionWaiters(new Error("relay client closed"));
