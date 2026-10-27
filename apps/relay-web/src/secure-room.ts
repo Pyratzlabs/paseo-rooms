@@ -267,7 +267,7 @@ function secureTransport(socket: RoomSocket): Transport {
           ? textEncoder.encode(data)
           : new Uint8Array(data);
       const type = typeof data === "string" ? "handshake" : "secure";
-      socket.send(
+      return socket.send(
         JSON.stringify({
           v: 2,
           type,
