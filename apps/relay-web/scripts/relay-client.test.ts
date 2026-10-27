@@ -228,3 +228,190 @@ test("relay client fails closed when a relay injects an invalid v2 record", asyn
     await new Promise<void>((resolve) => relay.close(() => resolve()));
   }
 });
+
+test(
+  "multiplexed relay congestion bounds one producer while another room survives and sends",
+  { timeout: 5000 },
+  async () => {
+    const relay = await createRelay({
+      port: 0,
+      relayKey: "isolated-output",
+      pingIntervalMs: 60_000,
+      log: () => {},
+    });
+    const hostUrl = `ws://127.0.0.1:${relay.port}/host`;
+    const original = WebSocket.prototype.send;
+    let host: WebSocket | undefined;
+    let paused = false,
+      aggregatePressure = false;
+    const callbacks: Array<() => void> = [];
+    let writes = 0;
+    WebSocket.prototype.send = function (data, optionsOrCallback?, callback?) {
+      const outgoing = this.url === hostUrl;
+      if (outgoing) host = this;
+      const done = (
+        typeof optionsOrCallback === "function" ? optionsOrCallback : callback
+      ) as ((error?: Error) => void) | undefined;
+      const wrapped = (error?: Error) => {
+        if (outgoing && paused) {
+          callbacks.push(() => done?.(error));
+        } else done?.(error);
+      };
+      if (outgoing && paused) writes++;
+      return original.call(
+        this,
+        data,
+        typeof optionsOrCallback === "object" ? optionsOrCallback : {},
+        wrapped,
+      );
+    };
+    const virtuals = new Map<string, RoomSocket>();
+    const closed = new Set<string>();
+    const client = startRelayClient({
+      url: hostUrl,
+      key: "isolated-output",
+      currentTokens: () => ["noisy-room", "healthy-room"],
+      handleRequest: async () => ({
+        status: 404,
+        headers: {},
+        body: Buffer.alloc(0),
+      }),
+      openSocket: async (path, socket) => {
+        const name = path.includes("noisy-room") ? "noisy" : "healthy";
+        virtuals.set(name, socket);
+        socket.onClose(() => closed.add(name));
+        return true;
+      },
+      log: () => {},
+    });
+    let noisy: WebSocket | undefined, healthy: WebSocket | undefined;
+    try {
+      await client.waitUntilConnected();
+      await waitFor(() => Boolean(host));
+      noisy = new WebSocket(
+        `ws://127.0.0.1:${relay.port}/api/rooms/noisy-room/ws`,
+      );
+      healthy = new WebSocket(
+        `ws://127.0.0.1:${relay.port}/api/rooms/healthy-room/ws`,
+      );
+      await Promise.all(
+        [noisy, healthy].map(
+          (socket) =>
+            new Promise<void>((resolve, reject) => {
+              socket.once("open", resolve);
+              socket.once("error", reject);
+            }),
+        ),
+      );
+      await waitFor(() => virtuals.size === 2);
+      Object.defineProperty(host!, "bufferedAmount", {
+        get: () => (aggregatePressure ? 600 * 1024 : 0),
+      });
+      paused = true;
+      void virtuals.get("noisy")!.send("x".repeat(80 * 1024));
+      await waitFor(() => callbacks.length === 1);
+      aggregatePressure = true;
+      assert.equal(
+        virtuals.get("healthy")!.bufferedAmount,
+        0,
+        "shared transport backlog is not the healthy room's buffer",
+      );
+      for (let index = 0; index < 8; index++)
+        void virtuals.get("noisy")!.send("x".repeat(80 * 1024));
+      assert.ok(closed.has("noisy"));
+      assert.ok(!closed.has("healthy"));
+      assert.equal(
+        writes,
+        1,
+        "producer close must not clear the outstanding physical write",
+      );
+      assert.equal(client.connected(), true);
+      const received = new Promise<string>((resolve) =>
+        healthy!.once("message", (data) => resolve(data.toString())),
+      );
+      const sent = virtuals.get("healthy")!.send("healthy reply");
+      aggregatePressure = false;
+      paused = false;
+      for (const done of callbacks.splice(0)) done();
+      await sent;
+      assert.equal(await received, "healthy reply");
+      assert.equal(healthy.readyState, WebSocket.OPEN);
+      assert.ok(!closed.has("healthy"));
+      assert.equal(client.connected(), true);
+    } finally {
+      paused = false;
+      aggregatePressure = false;
+      for (const done of callbacks.splice(0)) done();
+      WebSocket.prototype.send = original;
+      noisy?.terminate();
+      healthy?.terminate();
+      client.close();
+      await relay.close();
+    }
+  },
+);
+
+test(
+  "relay preserves a legal 300 KiB HTTP response and returns 503 when its serialized frame exceeds the control cap",
+  { timeout: 5000 },
+  async () => {
+    const relay = new WebSocketServer({ port: 0, perMessageDeflate: false });
+    await new Promise<void>((resolve) => relay.once("listening", resolve));
+    const address = relay.address();
+    assert.ok(typeof address === "object" && address);
+    const responses = new Map<string, { status: number; bodyB64: string }>();
+    let peer: WebSocket | undefined;
+    relay.on("connection", (socket) => {
+      peer = socket;
+      socket.on("message", (data) => {
+        const value = JSON.parse(data.toString()) as {
+          type: string;
+          id: string;
+          status: number;
+          bodyB64: string;
+        };
+        if (value.type === "http_response") responses.set(value.id, value);
+      });
+    });
+    const body = Buffer.alloc(300 * 1024, 97);
+    const client = startRelayClient({
+      url: `ws://127.0.0.1:${address.port}/host`,
+      currentTokens: () => [],
+      openSocket: async () => false,
+      handleRequest: async (request) => ({
+        status: 200,
+        headers: { "content-type": "application/octet-stream" },
+        body: request.path === "/legal" ? body : Buffer.alloc(400 * 1024, 98),
+      }),
+      log: () => {},
+    });
+    try {
+      await client.waitUntilConnected();
+      await waitFor(() => Boolean(peer));
+      for (const id of ["legal", "oversized"])
+        peer!.send(
+          JSON.stringify({
+            v: 1,
+            type: "http_request",
+            id,
+            method: "GET",
+            path: `/${id}`,
+            headers: {},
+            bodyB64: "",
+          }),
+        );
+      await waitFor(() => responses.size === 2);
+      assert.equal(responses.get("legal")!.status, 200);
+      assert.deepEqual(
+        Buffer.from(responses.get("legal")!.bodyB64, "base64"),
+        body,
+      );
+      assert.equal(responses.get("oversized")!.status, 503);
+      assert.equal(client.connected(), true);
+    } finally {
+      client.close();
+      for (const socket of relay.clients) socket.terminate();
+      await new Promise<void>((resolve) => relay.close(() => resolve()));
+    }
+  },
+);

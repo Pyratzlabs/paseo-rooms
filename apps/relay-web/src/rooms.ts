@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { routeTokenForSecret } from "./relay/route-ownership.js";
 import type { RegisteredRoute } from "./relay/protocol.js";
+import { deleteRoomAttachments } from "./room-attachments.js";
 import {
   exportPublicKey,
   generateKeyPair,
@@ -174,6 +175,7 @@ export function relayRoutes(relayOrigin?: string): RegisteredRoute[] {
 }
 
 export function deleteRoom(token: string): boolean {
+  deleteRoomAttachments(token);
   const deletedSecure = secureRooms.delete(token);
   const deletedLegacy = rooms.delete(token);
   if (deletedLegacy) persist();

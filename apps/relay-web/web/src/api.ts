@@ -40,6 +40,9 @@ export interface TimelineItem {
   status?: string;
   message?: string;
   items?: Array<{ text?: string; completed?: boolean; status?: string }>;
+  messageId?: string;
+  clientMessageId?: string;
+  roomImages?: import("../../shared/room-attachments.js").RoomImage[];
 }
 
 export type StreamEvent =

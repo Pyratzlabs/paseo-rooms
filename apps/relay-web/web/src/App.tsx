@@ -24,6 +24,7 @@ import { Timeline } from "./components/Timeline";
 import { Composer } from "./components/Composer";
 import { NameGate } from "./components/NameGate";
 import { Participants } from "./components/Participants";
+import { RoomImageCache } from "./image-cache";
 import {
   configuredRelayTarget,
   requiresCustomRelayConfirmation,
@@ -75,6 +76,9 @@ export default function App() {
     "connecting",
   );
   const [working, setWorking] = useState(false);
+  const [imageSupport, setImageSupport] = useState(false);
+  const [imageCache, setImageCache] = useState<RoomImageCache | null>(null);
+  const cacheRef = useRef<RoomImageCache | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fatal, setFatal] = useState(false);
   const [answering, setAnswering] = useState<string | null>(null);
@@ -178,6 +182,7 @@ export default function App() {
             setParticipants(welcome.participants.filter(isParticipant));
             setItems(projectTimeline(welcome.history));
             setWorking(welcome.working);
+            setImageSupport(welcome.images);
             continueAssistant.current = false;
           },
           onEvent: applyLiveFrame,
@@ -185,6 +190,9 @@ export default function App() {
             if (disposed) return;
             setState("reconnecting");
             secureSession.current = null;
+            cacheRef.current?.close();
+            cacheRef.current = null;
+            setImageCache(null);
             timer.current = window.setTimeout(connect, retry.current);
             retry.current = Math.min(retry.current * 2, 15_000);
           },
@@ -193,7 +201,14 @@ export default function App() {
           },
         })
           .then((session) => {
+            if (disposed) {
+              session.close();
+              return;
+            }
             secureSession.current = session;
+            cacheRef.current?.close();
+            cacheRef.current = new RoomImageCache(session);
+            setImageCache(cacheRef.current);
           })
           .catch(() => !disposed && setFatal(true));
         return;
@@ -241,11 +256,18 @@ export default function App() {
       socket?.close();
       secureSession.current?.close();
       secureSession.current = null;
+      cacheRef.current?.close();
+      cacheRef.current = null;
       if (timer.current) window.clearTimeout(timer.current);
     };
   }, [applyLiveFrame, customRelayConfirmed, name, sync, token]);
 
-  async function send(message: string) {
+  async function send(
+    message: string,
+    file: File | null,
+    key: string,
+    progress: (value: number) => void,
+  ) {
     if (!name) return;
     if (!token) return;
     setError(null);
@@ -253,6 +275,8 @@ export default function App() {
       if (secureInvite.current) {
         const session = secureSession.current;
         if (!session) throw new Error("secure room is not ready");
+        if (file)
+          return await session.sendImageMessage(message, file, key, progress);
         await session.sendMessage(message);
       } else {
         await api.message(token, message, name);
@@ -400,6 +424,7 @@ export default function App() {
               onAnswer={answer}
               onAnswerPrompts={answerPrompts}
               answering={answering}
+              imageCache={imageCache}
             />
             {working && (
               <div className="working">
@@ -410,7 +435,12 @@ export default function App() {
           </div>
         </main>
       </div>
-      <Composer onSend={send} error={error} />
+      <Composer
+        onSend={send}
+        error={error}
+        images={Boolean(secureInvite.current) && imageSupport}
+        connected={state === "live"}
+      />
     </div>
   );
 }

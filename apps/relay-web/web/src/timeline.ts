@@ -1,7 +1,14 @@
 import type { StreamEvent, TimelineItem } from "./api.js";
+import { isRoomImage, type RoomImage } from "../../shared/room-attachments.js";
 
 export type DisplayItem =
-  | { id: string; kind: "user" | "assistant"; text: string; author?: string }
+  | {
+      id: string;
+      kind: "user" | "assistant";
+      text: string;
+      author?: string;
+      images?: RoomImage[];
+    }
   | {
       id: string;
       kind: "reasoning" | "activity" | "todo" | "error";
@@ -19,6 +26,15 @@ export function appendLiveItem(
   item: DisplayItem,
   continueAssistant: boolean,
 ): DisplayItem[] {
+  if (item.kind === "user" && item.id.startsWith("user:")) {
+    const index = items.findIndex(
+      (value) => value.kind === "user" && value.id === item.id,
+    );
+    if (index >= 0)
+      return items.map((value, at) =>
+        at === index ? { ...value, ...item } : value,
+      );
+  }
   const previous = items.at(-1);
   if (
     continueAssistant &&
@@ -57,10 +73,20 @@ export function projectTimeline(
         const value = text(item.text);
         const match = value.match(collaborator);
         output.push({
-          id: key,
+          id:
+            typeof item.clientMessageId === "string"
+              ? `user:${item.clientMessageId}`
+              : typeof item.messageId === "string"
+                ? `user:${item.messageId}`
+                : key,
           kind: "user",
           text: match?.[2] ?? value,
           author: match?.[1] ?? "Host",
+          ...(Array.isArray(item.roomImages) &&
+          item.roomImages.length === 1 &&
+          item.roomImages.every(isRoomImage)
+            ? { images: item.roomImages }
+            : {}),
         });
         break;
       }
@@ -110,7 +136,10 @@ export function projectTimeline(
         output.push({ id: key, kind: "activity", label: "Agent activity" });
     }
   }
-  return output;
+  return output.reduce<DisplayItem[]>(
+    (all, item) => appendLiveItem(all, item, false),
+    [],
+  );
 }
 
 /** Returns a small append-only projection suitable for a live socket frame. */
