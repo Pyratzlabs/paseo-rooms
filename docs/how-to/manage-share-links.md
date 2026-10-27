@@ -19,3 +19,9 @@ The v2 URL includes an invite secret in its fragment. Browsers do not send URL f
 ## Understand restarts
 
 Encrypted rooms are intentionally in-memory. Restarting the local room server or laptop invalidates their links. This limits the lifetime of transport keys and avoids persisting conversation access material.
+
+## Recover from a network outage
+
+Losing internet does not delete rooms while the local room server remains running. The host reconnects automatically and registers its existing rooms again, preserving their links. If relay heartbeats stop arriving for 90 seconds, the host terminates the stale connection and starts reconnecting. Failed attempts retry with backoff, up to 30–45 seconds between attempts; connection setup also times out after 90 seconds. These timers run only while the host process is running and scheduled.
+
+Relay-hosted room links can return 404 while the host is disconnected. After the host reconnects, reload the original complete invitation link. Restarting Paseo or the room runtime during the outage loses the in-memory rooms and requires new links.

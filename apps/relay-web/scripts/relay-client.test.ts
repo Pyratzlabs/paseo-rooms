@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import net from "node:net";
 import { WebSocket, WebSocketServer } from "ws";
 import { createRelay } from "../src/relay/relay.js";
 import {
@@ -169,6 +170,67 @@ test("relay heartbeats keep the client alive and closing cancels the watchdog", 
     for (const timer of timers) clearInterval(timer);
     for (const socket of relay.clients) socket.terminate();
     await new Promise<void>((resolve) => relay.close(() => resolve()));
+  }
+});
+
+test("relay client retries stalled WebSocket handshakes and stops when closed", async () => {
+  const sockets = new Set<net.Socket>();
+  let connections = 0;
+  const relay = net.createServer((socket) => {
+    connections++;
+    sockets.add(socket);
+    socket.on("data", () => {}); // Accept TCP, but never complete the upgrade.
+    socket.on("close", () => sockets.delete(socket));
+  });
+  await new Promise<void>((resolve) => relay.listen(0, "127.0.0.1", resolve));
+  const address = relay.address();
+  assert.ok(typeof address === "object" && address !== null);
+  const client = startRelayClient({
+    url: `ws://127.0.0.1:${address.port}/host`,
+    currentTokens: () => [],
+    handleRequest: async () => ({
+      status: 200,
+      headers: {},
+      body: Buffer.alloc(0),
+    }),
+    openSocket: async () => false,
+    heartbeatTimeoutMs: 150,
+    minBackoffMs: 5,
+    maxBackoffMs: 10,
+    log: () => {},
+  });
+  try {
+    await assert.rejects(client.waitUntilConnected(1_000), /handshake|closed/);
+    await waitFor(() => connections >= 2);
+    client.close();
+    const count = connections;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(connections, count);
+    assert.equal(client.connected(), false);
+  } finally {
+    client.close();
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => relay.close(() => resolve()));
+  }
+});
+
+test("relay heartbeat timeout rejects invalid timer values", () => {
+  for (const heartbeatTimeoutMs of [0, -1, 0.5, NaN, Infinity, 2_147_483_648]) {
+    assert.throws(
+      () =>
+        startRelayClient({
+          url: "ws://127.0.0.1:1/host",
+          currentTokens: () => [],
+          handleRequest: async () => ({
+            status: 200,
+            headers: {},
+            body: Buffer.alloc(0),
+          }),
+          openSocket: async () => false,
+          heartbeatTimeoutMs,
+        }),
+      /invalid relay heartbeat timeout/,
+    );
   }
 });
 
