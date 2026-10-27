@@ -23,6 +23,155 @@ function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
   });
 }
 
+for (const failure of [
+  "no heartbeat",
+  "heartbeats stop",
+  "other traffic continues",
+]) {
+  test(`relay client recovers and re-registers rooms when ${failure}`, async () => {
+    const relay = new WebSocketServer({ port: 0 });
+    await new Promise<void>((resolve) => relay.once("listening", resolve));
+    const address = relay.address();
+    assert.ok(typeof address === "object" && address !== null);
+    const route = {
+      token: "o_" + "a".repeat(43),
+      protocol: 2 as const,
+      ownershipSecret: "b".repeat(43),
+    };
+    const registrations: unknown[] = [];
+    const timers: ReturnType<typeof setInterval>[] = [];
+    let connections = 0;
+    let pongs = 0;
+    let virtualClosed = false;
+    relay.on("connection", (socket) => {
+      const connection = ++connections;
+      socket.on("message", (data) => {
+        const frame = JSON.parse(data.toString());
+        if (frame.type === "register") registrations.push(frame);
+        if (frame.type === "pong") pongs++;
+      });
+      if (connection === 1) {
+        socket.send(
+          JSON.stringify({
+            v: 1,
+            type: "ws_event",
+            id: "guest",
+            event: "open",
+            path: `/v2/rooms/${route.token}/ws`,
+          }),
+        );
+      }
+      const timer = setInterval(() => {
+        if (socket.readyState !== WebSocket.OPEN) return;
+        if (connection > 1 || (failure === "heartbeats stop" && pongs < 3)) {
+          socket.send(JSON.stringify({ v: 1, type: "ping", t: Date.now() }));
+        } else if (failure === "other traffic continues") {
+          socket.send(
+            JSON.stringify({ v: 1, type: "registered", token: route.token }),
+          );
+        }
+      }, 25);
+      timers.push(timer);
+      socket.on("close", () => clearInterval(timer));
+    });
+    const logs: string[] = [];
+    const client = startRelayClient({
+      url: `ws://127.0.0.1:${address.port}/host`,
+      currentTokens: () => ["legacy-room"],
+      currentRoutes: () => [route],
+      handleRequest: async () => ({
+        status: 200,
+        headers: {},
+        body: Buffer.alloc(0),
+      }),
+      openSocket: async (_path, socket) => {
+        socket.onClose(() => {
+          virtualClosed = true;
+        });
+        return true;
+      },
+      heartbeatTimeoutMs: 150,
+      minBackoffMs: 5,
+      maxBackoffMs: 10,
+      log: (line) => logs.push(line),
+    });
+    try {
+      await waitFor(() => registrations.length >= 2);
+      assert.equal(connections, 2);
+      assert.deepEqual(registrations[0], {
+        v: 1,
+        type: "register",
+        tokens: ["legacy-room"],
+        routes: [route],
+      });
+      assert.deepEqual(registrations[1], registrations[0]);
+      assert.equal(virtualClosed, true);
+      assert.ok(logs.some((line) => line.includes("heartbeat timed out")));
+      if (failure === "heartbeats stop") assert.ok(pongs >= 3);
+    } finally {
+      client.close();
+      for (const timer of timers) clearInterval(timer);
+      for (const socket of relay.clients) socket.terminate();
+      await new Promise<void>((resolve) => relay.close(() => resolve()));
+    }
+  });
+}
+
+test("relay heartbeats keep the client alive and closing cancels the watchdog", async () => {
+  const relay = new WebSocketServer({ port: 0 });
+  await new Promise<void>((resolve) => relay.once("listening", resolve));
+  const address = relay.address();
+  assert.ok(typeof address === "object" && address !== null);
+  let connections = 0;
+  let pongs = 0;
+  const timers: ReturnType<typeof setInterval>[] = [];
+  relay.on("connection", (socket) => {
+    connections++;
+    socket.on("message", (data) => {
+      if (JSON.parse(data.toString()).type === "pong") pongs++;
+    });
+    const timer = setInterval(() => {
+      if (socket.readyState === WebSocket.OPEN)
+        socket.send(JSON.stringify({ v: 1, type: "ping", t: Date.now() }));
+    }, 25);
+    timers.push(timer);
+    socket.on("close", () => clearInterval(timer));
+  });
+  const logs: string[] = [];
+  const client = startRelayClient({
+    url: `ws://127.0.0.1:${address.port}/host`,
+    currentTokens: () => [],
+    handleRequest: async () => ({
+      status: 200,
+      headers: {},
+      body: Buffer.alloc(0),
+    }),
+    openSocket: async () => false,
+    heartbeatTimeoutMs: 150,
+    minBackoffMs: 5,
+    maxBackoffMs: 10,
+    log: (line) => logs.push(line),
+  });
+  try {
+    await waitFor(() => pongs >= 14);
+    assert.equal(connections, 1);
+    assert.equal(client.connected(), true);
+    client.close();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    assert.equal(client.connected(), false);
+    assert.equal(connections, 1);
+    assert.equal(
+      logs.some((line) => line.includes("heartbeat timed out")),
+      false,
+    );
+  } finally {
+    client.close();
+    for (const timer of timers) clearInterval(timer);
+    for (const socket of relay.clients) socket.terminate();
+    await new Promise<void>((resolve) => relay.close(() => resolve()));
+  }
+});
+
 test("relay forwards browser socket messages to the virtual room socket", async () => {
   const relay = await createRelay({
     port: 0,
