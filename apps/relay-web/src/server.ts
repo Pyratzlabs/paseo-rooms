@@ -62,7 +62,6 @@ import {
 const PORT = Number(process.env.PORT ?? 3000);
 const LOCAL_BASE_URL = process.env.BASE_URL ?? `http://localhost:${PORT}`;
 const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ?? LOCAL_BASE_URL;
-const BASE_HOST = new URL(LOCAL_BASE_URL).host;
 // Paseo evaluates plugin server code in a function bundle, where module
 // metadata cannot be parsed. The plugin supplies an explicit directory before
 // importing this module. Standalone commands run either from this package or
@@ -722,6 +721,16 @@ const server = http.createServer(async (req, res) => {
 });
 
 // WS /api/rooms/<token>/ws — live timeline fan-out
+function localOriginHost(): string {
+  const origin = new URL(LOCAL_BASE_URL);
+  if (origin.port === "0") {
+    const address = server.address();
+    if (address && typeof address === "object")
+      origin.port = String(address.port);
+  }
+  return origin.host;
+}
+
 const wss = new WebSocketServer({ noServer: true });
 const v2Wss = new WebSocketServer({
   noServer: true,
@@ -732,7 +741,7 @@ server.on("upgrade", (req, socket, head) => {
   const origin = req.headers.origin;
   if (origin) {
     try {
-      if (new URL(origin).host !== BASE_HOST) {
+      if (new URL(origin).host !== localOriginHost()) {
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
         socket.destroy();
         return;
@@ -939,8 +948,14 @@ export async function startLocalRoomServer(
     server.once("error", onError);
     server.listen(PORT, "127.0.0.1", () => {
       server.off("error", onError);
+      const address = server.address();
+      const port = typeof address === "object" && address ? address.port : PORT;
+      const baseUrl = new URL(LOCAL_BASE_URL);
+      baseUrl.port = String(port);
       if (options.connectDaemon !== false) startRelayDialOut(options);
-      console.log(`paseo-rooms listening on ${LOCAL_BASE_URL}`);
+      console.log(
+        `paseo-rooms listening on ${baseUrl.toString().replace(/\/$/, "")}`,
+      );
       if (options.connectDaemon !== false) {
         void ensureConnected()
           .then(() => console.log("connected to Paseo daemon"))
@@ -952,10 +967,6 @@ export async function startLocalRoomServer(
               console.error("Paseo daemon connection stopped:", error);
           });
       }
-      const address = server.address();
-      const port = typeof address === "object" && address ? address.port : PORT;
-      const baseUrl = new URL(LOCAL_BASE_URL);
-      baseUrl.port = String(port);
       resolve({
         baseUrl: baseUrl.toString().replace(/\/$/, ""),
         adminToken: ADMIN_TOKEN,

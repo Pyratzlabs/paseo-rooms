@@ -30,7 +30,7 @@ Messages and supported structured decisions pass through a host-side allowlist. 
 
 ## Browser delivery and relay routing are separate
 
-By default, room links open the independently published GitLab Pages client. The configured product site, documentation, and default relay use `paseo-rooms.pyratz.com`. The **Pyratz Labs** client preset serves the room UI from the relay origin instead. A custom client and a custom relay can also be selected independently.
+By default, room links open the independently published GitHub Pages client. The configured product site, documentation, and default relay use `paseo-rooms.pyratz.com`. The **Pyratz Labs** client preset serves the room UI from the relay origin instead. A custom client and a custom relay can also be selected independently.
 
 The invite fragment carries the relay chosen for the room, so changing a default does not rewrite an existing link. A client asks for confirmation before connecting to a relay other than its configured default. A static host needs an SPA fallback for `/r/<route-id>`.
 

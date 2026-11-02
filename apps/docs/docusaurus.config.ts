@@ -39,7 +39,7 @@ const config: Config = {
           position: "right",
         },
         {
-          href: "https://gitlab.com/pyratzlabs/software/paseo-rooms",
+          href: "https://github.com/Pyratzlabs/paseo-rooms",
           label: "Source",
           position: "right",
         },
@@ -59,7 +59,7 @@ const config: Config = {
           items: [
             {
               label: "Source",
-              href: "https://gitlab.com/pyratzlabs/software/paseo-rooms",
+              href: "https://github.com/Pyratzlabs/paseo-rooms",
             },
             {
               label: "AGPL-3.0-or-later",

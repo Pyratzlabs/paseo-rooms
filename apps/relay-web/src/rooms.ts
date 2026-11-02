@@ -146,7 +146,7 @@ export function toPublicRoom(room: AnyRoom): PublicRoom {
 }
 
 export function publicRoomUrl(room: AnyRoom, baseUrl: string): string {
-  const url = `${baseUrl}/r/${room.token}`;
+  const url = `${baseUrl.replace(/\/+$/, "")}/r/${room.token}`;
   if (!isSecureRoom(room)) return url;
   const invite = `${url}#v=2&i=${encodeURIComponent(room.inviteSecret)}&hp=${encodeURIComponent(room.hostPublicKey)}`;
   return room.relayOrigin

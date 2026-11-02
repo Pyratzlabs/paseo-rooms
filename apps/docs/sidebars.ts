@@ -16,6 +16,7 @@ const sidebars: SidebarsConfig = {
         "how-to/manage-share-links",
         "how-to/choose-a-client-and-relay",
         "how-to/run-your-own-relay",
+        "how-to/publish-github-pages",
         "how-to/migrate-hosted-domain",
       ],
     },

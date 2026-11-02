@@ -38,7 +38,7 @@ test("proxy deployment restricts its raw HTTP health-check port to loopback", ()
 });
 
 test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
-  const jobs = ["quality", "tests", "plugin-verify", "deploy", "pages"];
+  const jobs = ["quality", "tests", "plugin-verify", "deploy"];
 
   for (const job of jobs) {
     assert.match(
@@ -146,26 +146,29 @@ test("quality and behavior checks are separate CI jobs", () => {
   assert.match(deployScript, /npm run build:web/);
 });
 
-test("GitLab Pages publishes a relay-configured room SPA after verification", () => {
-  assert.match(config, /^pages:[\s\S]*?^  stage: deploy$/m);
+test("GitHub Pages publishes the validated project-path SPA after all checks", async () => {
+  const workflow = await readFile(
+    new URL("../../../.github/workflows/ci.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /npm run test:pages/);
   assert.match(
-    config,
-    /VITE_PASEO_ROOMS_RELAY_ORIGIN=https:\/\/paseo-rooms\.pyratz\.com npm run build:web/,
+    workflow,
+    /needs: \[quality, tests, plugin-verify, pages-build\]/,
   );
   assert.match(
-    config,
-    /cp apps\/relay-web\/public\/room\.html pages-public\/index\.html/,
+    workflow,
+    /if: github.ref == 'refs\/heads\/main' && github.event_name != 'pull_request'/,
   );
-  assert.match(
+  assert.match(workflow, /path: \.pages-site/);
+  assert.match(workflow, /pages: write/);
+  assert.match(workflow, /id-token: write/);
+  assert.match(workflow, /name: github-pages/);
+  assert.doesNotMatch(
     config,
-    /cp apps\/relay-web\/public\/room\.html pages-public\/404\.html/,
+    /^pages:/m,
+    "the retired client must not get another GitLab publisher",
   );
-  assert.match(config, /publish: pages-public/);
-  assert.match(
-    config,
-    /^pages:[\s\S]*?needs:[\s\S]*?job: quality\n      artifacts: false/m,
-  );
-  assert.match(config, /^pages:[\s\S]*?CI_COMMIT_BRANCH == "main"/m);
 });
 
 test("the local room server builds the documentation site before starting", () => {

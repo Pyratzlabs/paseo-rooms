@@ -10,6 +10,7 @@
   "scripts": {
     "start": "npm run start --workspace @paseo-rooms/relay-web",
     "build:web": "npm run build:web --workspace @paseo-rooms/relay-web",
+    "build:pages": "node scripts/build-pages.mjs",
     "build:docs": "npm run build --workspace @paseo-rooms/docs",
     "verify:plugin-distribution": "npm run build:plugin && npm run test:plugin && npm run typecheck:plugin && npm run typecheck --workspace @paseo-rooms/relay-web && npm run test:local-server --workspace @paseo-rooms/relay-web",
     "dev:web": "npm run dev:web --workspace @paseo-rooms/relay-web",
@@ -34,6 +35,7 @@
     "test:questions": "npm run test:questions --workspace @paseo-rooms/relay-web",
     "test:public-events": "npm run test:public-events --workspace @paseo-rooms/relay-web",
     "test:presence": "npm run test:presence --workspace @paseo-rooms/relay-web",
+    "test:pages": "npm run build:pages && node --test apps/relay-web/scripts/github-pages.test.mjs",
     "test:ci": "npm run test:ci --workspace @paseo-rooms/relay-web",
     "test:lock": "npm run test:lock --workspace @paseo-rooms/relay-web",
     "test:plugin": "npm test --workspace @paseo-rooms/paseo-plugin",

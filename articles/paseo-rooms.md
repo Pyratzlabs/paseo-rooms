@@ -26,6 +26,10 @@ The developer can keep working while someone else investigates in the room. Both
 
 This is also useful beyond the engineering team. We can invite a client into a room while shaping a plan, so they can answer business questions where those questions arise. “What should happen when a customer cancels?” is easier to resolve with the person who knows the business participating in the discussion. The team chooses a session whose contents and agent permissions are appropriate for that collaboration.
 
+![Four participants share a fictional Gather workshop-booking plan while the agent asks who should receive a newly available place.](../apps/docs/static/img/examples/gather-planning-room.png)
+
+_An illustrative room in the actual Rooms interface. Gather, its conversation and its participants are fictional; the question uses the real structured-answer controls._
+
 ## Why we built it as a Paseo plugin
 
 [Paseo](https://paseo.sh/) already gives us a place to run coding agents and follow their work. Its [plugin system](https://paseo.sh/docs/plugins) gave us a natural place for sharing: beside the session we wanted to discuss.
@@ -44,7 +48,7 @@ Room traffic is end-to-end encrypted between each participant's browser and the 
 
 The relay forwards ciphertext. It can see routing identifiers, connection information, traffic sizes, and timing; it can also interrupt traffic. With a trusted browser client, it cannot read the messages or images inside those encrypted records. The host connects outward, so no public laptop port is needed.
 
-**The frontend is part of the trust model.** Someone who controls the JavaScript served to a browser could change it to capture messages before encryption. Our default client is delivered separately on GitLab Pages, which separates its delivery from the relay but still requires trusting that client origin. Serving both from the relay's domain means trusting that operator for the page as well as routing. A maliciously altered client defeats the confidentiality claim.
+**The frontend is part of the trust model.** Someone who controls the JavaScript served to a browser could change it to capture messages before encryption. Our default client is delivered separately on GitHub Pages, which separates its delivery from the relay but still requires trusting that client origin. Serving both from the relay's domain means trusting that operator for the page as well as routing. A maliciously altered client defeats the confidentiality claim.
 
 Teams can host both pieces themselves. Deploy the relay and its bundled frontend under a domain you control, then select that relay and **Custom client** in the plugin. You can also serve the frontend from a separate static host you control. Either way, your organisation controls code delivery and routing; it still needs to trust its host machines, hosting administrators, and invited participants. The [self-hosting guide](https://paseo-rooms.pyratz.com/docs/how-to/run-your-own-relay) covers both arrangements.
 
@@ -61,5 +65,11 @@ That is a useful building block, rather than a demonstration of autonomous teamw
 _Agent-to-agent collaboration is a direction to explore, not a shipped coordinator._
 
 Those experiments need explicit roles, bounded turns, clear authority, and stopping conditions. A reply loop is easy to create; a useful collaboration needs more structure.
+
+## Try it with your team
+
+We’d love you to test Paseo Rooms on a real planning or debugging session. [Install the plugin](https://paseo-rooms.pyratz.com/docs/how-to/install-the-plugin), create a room, and invite a teammate or client who can help answer the next question. Participants only need the complete invitation link and a browser.
+
+Start with a session you are comfortable sharing, check the agent’s tool permissions, and revoke the link when you are done. Tell us where it helped or what got in the way by [opening an issue on GitHub](https://github.com/Pyratzlabs/paseo-rooms/issues).
 
 For now, Rooms solves the problem we started with: bringing the right person into an agent conversation without tying up the developer's screen. Explore [Paseo Rooms](https://paseo-rooms.pyratz.com/) or follow the [first-room guide](https://paseo-rooms.pyratz.com/docs/tutorials/share-your-first-room) to try it with your team.

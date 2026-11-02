@@ -13,7 +13,7 @@ const e2eeSmoke = process.env.PASEO_E2EE_SMOKE === "1";
  */
 export default defineConfig({
   root: import.meta.dirname,
-  base: "/",
+  base: process.env.PASEO_ROOMS_WEB_BASE ?? "/",
   // Resolve the public E2EE export to the same shipped artifact for both the
   // browser bundle and Node runtime in one audited compatibility seam.
   resolve: {

@@ -64,7 +64,7 @@ diagram('room-architecture', 'The host keeps the agent connection',
         + box(444, 591, 355, 125, 'Browser participant B', ['Same room, separate channel'])
         + edge('M 230 581 V 542 H 810 V 508', two_way=True)
         + edge('M 900 508 V 558 H 620 V 581', two_way=True)
-        + box(44, 365, 500, 130, 'Static room client', ['Default: independently hosted on Pages', 'Client origin must be trusted'])
+        + box(44, 365, 500, 130, 'Static room client', ['Default: independently on GitHub Pages', 'Client origin must be trusted'])
         + '<path d="M 100 503 V 578" stroke="#8899a8" stroke-width="2" stroke-dasharray="6 6"/>'
         + '<text x="856" y="632" class="small">Encrypted payloads</text>'
         + '<text x="856" y="662" class="small">Routing metadata visible</text>')

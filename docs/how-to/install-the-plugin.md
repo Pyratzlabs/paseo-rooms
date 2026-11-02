@@ -61,7 +61,7 @@ configure `PASEO_ROOMS_RELAY_KEY` in the Paseo daemon's environment. For a
 custom default relay, set `PASEO_ROOMS_PUBLIC_URL` and
 `PASEO_ROOMS_RELAY_URL`, with a key only when that relay requires one.
 
-New public-room links use `https://paseo-rooms-9eb268.gitlab.io`, a GitLab Pages
+New public-room links use `https://pyratzlabs.github.io/paseo-rooms`, a GitHub Pages
 client that connects to the public relay. `PASEO_ROOMS_CLIENT_URL` overrides
 only the browser client origin placed in newly created links, for example for a
 separately hosted static client. The relay stays at `PASEO_ROOMS_PUBLIC_URL`.

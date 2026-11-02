@@ -28,7 +28,7 @@ replay, and deny service.
 
 ### Current client-delivery limitation
 
-The default browser client is published independently on GitLab Pages. A
+The default browser client is published independently on GitHub Pages. A
 same-origin relay client and custom client origins are also supported. Client
 code is part of the trusted endpoint: a malicious delivery origin can replace
 JavaScript and capture plaintext or the invitation before encryption.

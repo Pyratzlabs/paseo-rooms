@@ -16,7 +16,7 @@ The relay sees route IDs, connection metadata, timing, and ciphertext sizes. It 
 
 Encryption happens in the browser and the host runtime. An operator who controls the browser's JavaScript could modify it to capture the invite or messages before encryption. Encrypted room transport does not protect against a malicious client delivery origin.
 
-The default GitLab Pages client is delivered independently from the relay. That separates the relay's routing role from the first page load, but users still trust the Pages deployment and its administrators. The same-origin client places both roles with the relay operator. A verifiable, version-pinned client delivery mechanism remains future work.
+The default GitHub Pages client is delivered independently from the relay. That separates the relay's routing role from the first page load, but users still trust the Pages deployment and its administrators. The same-origin client places both roles with the relay operator. A verifiable, version-pinned client delivery mechanism remains future work.
 
 A team can [self-host both the relay and frontend](../how-to/run-your-own-relay), either on one domain or on separately managed origins. This replaces reliance on the public operators with reliance on the team's own code delivery and infrastructure. It preserves the same encrypted browser-to-host channels. It does not eliminate trust in client code, host machines, infrastructure administrators, or invited participants.
 

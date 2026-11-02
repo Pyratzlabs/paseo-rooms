@@ -30,8 +30,14 @@ postponed until there is a stable release workflow.
 
 ## Runtime settings
 
-`PASEO_ROOMS_PORT` changes the loopback port (default `3000`). `PASEO_HOME`
-chooses the parent data directory; the room runtime stores its local state in
+The plugin uses an OS-assigned free loopback port by default (`PASEO_ROOMS_PORT=0`),
+so it does not reserve a development port such as `3000`. Set `PASEO_ROOMS_PORT`
+to a number from `1` to `65535` to require a fixed port; an occupied override
+reports an error rather than silently choosing another port. Public share URLs
+are independent of this internal port. The standalone `npm start` demo still
+defaults to port `3000`.
+
+`PASEO_HOME` chooses the parent data directory; the room runtime stores its local state in
 `$PASEO_HOME/paseo-rooms` (or `~/.paseo/paseo-rooms`).
 
 The hosted Pyratz Labs relay uses open registration: no registration key is
@@ -40,7 +46,7 @@ For a private relay, enter its operator's key in that widget or set
 `PASEO_ROOMS_RELAY_KEY` in the Paseo daemon's environment. The key authorizes
 this laptop to register rooms; it is never bundled with the plugin or stored
 in Git. The local room listener can start without a default key. New default links use
-`https://paseo-rooms-9eb268.gitlab.io`, the independently deployed browser
+`https://pyratzlabs.github.io/paseo-rooms`, the independently deployed browser
 client, and connect to the relay at `https://paseo-rooms.pyratz.com`.
 For a private relay, set `PASEO_ROOMS_PUBLIC_URL` and
 `PASEO_ROOMS_RELAY_URL`; its own client remains the default. Set

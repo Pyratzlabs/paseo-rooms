@@ -10,3 +10,6 @@ apps/relay-web/.e2ee-smoke/
 # Paseo runtime bundles generated from the plugin workspace.
 /client/
 /server/
+
+# Staged GitHub Pages client artifact.
+.pages-site/

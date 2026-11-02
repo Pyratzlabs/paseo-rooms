@@ -66,11 +66,11 @@ cp apps/relay-web/public/room.html /tmp/rooms-static/404.html
 cp -R apps/relay-web/public/assets /tmp/rooms-static/assets
 ```
 
-Publish `/tmp/rooms-static/` through your chosen HTTPS static host. Configure an SPA fallback that serves `index.html` for `/r/*`; `404.html` is the fallback used by GitLab Pages. Other hosts may require a rewrite rule rather than that filename. Keep `/assets/*` available at the origin root.
+Publish `/tmp/rooms-static/` through your chosen HTTPS static host. Configure an SPA fallback that serves `index.html` for `/r/*`; `404.html` is the fallback used by GitHub Pages. Other hosts may require a rewrite rule rather than that filename. Keep `/assets/*` available at the origin root.
 
 In the plugin, keep your relay selected and set **Custom client** to `https://rooms-ui.example.com`. Create a fresh link and verify a second browser can load history and exchange a message. The client build contains no conversation data or daemon credential; those arrive only over the room channel after invitation validation.
 
-You can instead keep the published GitLab Pages client and use only your relay, but that is **not** a fully self-hosted delivery model. For full control, both selected origins must be under your administration. Existing invitations retain their chosen client and relay; configuration changes affect new links only.
+You can instead keep the published GitHub Pages client and use only your relay, but that is **not** a fully self-hosted delivery model. For full control, both selected origins must be under your administration. Existing invitations retain their chosen client and relay; configuration changes affect new links only.
 
 ## Operate safely
 

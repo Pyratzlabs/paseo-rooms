@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Choose a room client and relay
 
-The hosted product and relay use `paseo-rooms.pyratz.com`. The default browser client remains separately published on GitLab Pages.
+The hosted product and relay use `paseo-rooms.pyratz.com`. The default browser client remains separately published on GitHub Pages.
 
 Each new room has two independent destinations:
 
@@ -21,11 +21,11 @@ links, the relay selected when they were created.
 
 | Relay             | Room client                        | When to choose it                                                                                                                                                                  |
 | ----------------- | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pyratz Labs relay | GitLab Pages client                | The default. The browser client is independently published at `paseo-rooms-9eb268.gitlab.io`.                                                                                      |
+| Pyratz Labs relay | GitHub Pages client                | The default. The browser client is independently published at `pyratzlabs.github.io/paseo-rooms/`.                                                                                 |
 | Pyratz Labs relay | Pyratz Labs client                 | Use the **Pyratz Labs** preset when you prefer the same-origin hosted client.                                                                                                      |
 | Pyratz Labs relay | Your client                        | Select **Custom client** and enter an HTTPS origin that serves a compatible Paseo Rooms client.                                                                                    |
 | Your relay        | Your client                        | The self-hosted option: select both custom endpoints and supply a host registration key only if your relay requires one.                                                           |
-| Your relay        | GitLab Pages or Pyratz Labs client | Useful when you want to operate routing infrastructure while continuing to use one of the published clients. The client asks for confirmation before connecting to a custom relay. |
+| Your relay        | GitHub Pages or Pyratz Labs client | Useful when you want to operate routing infrastructure while continuing to use one of the published clients. The client asks for confirmation before connecting to a custom relay. |
 
 All public combinations require HTTPS for the client and WSS for the relay.
 For development on one laptop only, HTTP and WS are accepted for `localhost`,
@@ -34,8 +34,8 @@ For development on one laptop only, HTTP and WS are accepted for `localhost`,
 ## Configure a new link in Paseo
 
 1. Open **Share session** for the agent.
-2. Under **Open room with**, select **GitLab Pages**, **Pyratz Labs**, or
-   **Custom client**. For a custom client, enter its origin, for example
+2. Under **Open room with**, select **GitHub Pages**, **Pyratz Labs**, or
+   **Custom client**. For a custom client, enter its base URL (a deployment path is supported), for example
    `https://rooms.example.com`.
 3. Under **Relay for new links**, keep the Pyratz Labs default or enter your
    relay origin, for example `wss://relay.example.com`.
@@ -60,3 +60,8 @@ relay operator no longer controls the first page load. It does not make an
 untrusted client safe, and it does not hide routing metadata such as route IDs,
 timing, and ciphertext sizes from the relay. Read [Security and privacy](../explanation/security-and-privacy)
 for the precise guarantees and limitations.
+
+The GitHub preset includes `/paseo-rooms` in its client URL. Keep this prefix
+when configuring it as a custom client. Saved GitLab preset choices migrate
+to GitHub, while deliberately custom URLs remain unchanged. See
+[Publish the GitHub Pages client](publish-github-pages) for deployment details.

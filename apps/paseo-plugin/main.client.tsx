@@ -11,7 +11,8 @@ import {
   CLIENT_ORIGIN_PRESETS,
   DEFAULT_CLIENT_ORIGIN,
   DEFAULT_RELAY_ORIGIN,
-  normalizeClientOrigin,
+  normalizeClientUrl,
+  parseClientOriginPreference,
   normalizeRelayOrigin,
   rebaseRoomUrl,
   type ClientOriginChoice,
@@ -33,25 +34,13 @@ function loadClientOriginPreference(): {
   customOrigin: string;
 } {
   try {
-    const raw = localStorage.getItem(CLIENT_ORIGIN_PREFERENCE_KEY);
-    if (!raw) return { choice: "gitlab", customOrigin: "" };
-    const value = JSON.parse(raw) as {
-      choice?: unknown;
-      customOrigin?: unknown;
-    };
-    if (
-      (value.choice === "pyratz" ||
-        value.choice === "gitlab" ||
-        value.choice === "custom") &&
-      (typeof value.customOrigin === "string" ||
-        value.customOrigin === undefined)
-    ) {
-      return { choice: value.choice, customOrigin: value.customOrigin ?? "" };
-    }
+    return parseClientOriginPreference(
+      localStorage.getItem(CLIENT_ORIGIN_PREFERENCE_KEY),
+    );
   } catch {
     // Storage is optional in plugin webviews and must never block sharing.
+    return parseClientOriginPreference(null);
   }
-  return { choice: "gitlab", customOrigin: "" };
 }
 
 const ThemeSchema = z.object({
@@ -112,7 +101,7 @@ export function SharePanel({ theme, agentId }: PluginAgentPanelProps) {
   const selectedPreset = CLIENT_ORIGIN_PRESETS.find(
     (preset) => preset.id === clientChoice,
   )!;
-  const normalizedCustomOrigin = normalizeClientOrigin(customOrigin);
+  const normalizedCustomOrigin = normalizeClientUrl(customOrigin);
   const selectedClientOrigin =
     clientChoice === "custom"
       ? normalizedCustomOrigin

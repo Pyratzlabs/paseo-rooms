@@ -25,6 +25,10 @@ Paseo Rooms lets you invite a teammate into an existing Paseo coding-agent sessi
 
 The plugin currently supports **Paseo 0.12.x**. A host needs Paseo and the plugin; collaborators need a compatible browser and the complete invitation link. Rooms is an open-source experiment, not a managed team identity or permissions service.
 
+![A fictional workshop-booking app is being planned by four room participants, with the agent asking a structured question about its waitlist.](/img/examples/gather-planning-room.png)
+
+_Illustrative demo in the actual Rooms UI, using a fictional app and participants._
+
 ## Start with a real session
 
 1. [Install the plugin](how-to/install-the-plugin).
@@ -35,7 +39,7 @@ Creating a link does not start a new agent: it shares the selected session. The 
 
 ## How the pieces fit
 
-The plugin runs a local room runtime beside Paseo. It connects outward to a relay; browser participants establish encrypted channels through that relay to the host. The default browser client is published separately on GitLab Pages. The relay routes traffic rather than storing a conversation database.
+The plugin runs a local room runtime beside Paseo. It connects outward to a relay; browser participants establish encrypted channels through that relay to the host. The default browser client is published separately on GitHub Pages. The relay routes traffic rather than storing a conversation database.
 
 A room link grants conversation controls for one agent, not a general connection to the Paseo daemon. **Participants can still influence what that agent does with its host-side tools.** Invite people you would trust to contribute to that session, and keep the agent's permissions appropriate to the task.
 

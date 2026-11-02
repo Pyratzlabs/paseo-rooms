@@ -158,6 +158,22 @@ test("a local-only v2 room does not put a relay target in its invite", () => {
   }
 });
 
+test("a static client base path is retained without a duplicate slash", () => {
+  const room = createRoom("agent", "Pages room", "wss://relay.example");
+  try {
+    const url = new URL(
+      publicRoomUrl(room, "https://pyratzlabs.github.io/paseo-rooms/"),
+    );
+    assert.equal(url.pathname, `/paseo-rooms/r/${room.token}`);
+    assert.equal(
+      new URLSearchParams(url.hash.slice(1)).get("relay"),
+      "wss://relay.example",
+    );
+  } finally {
+    deleteRoom(room.token);
+  }
+});
+
 function fakeDependencies(): {
   deps: SecureRoomDeps;
   sentMessages: string[];

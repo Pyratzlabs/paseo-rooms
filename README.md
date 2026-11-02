@@ -85,14 +85,15 @@ The agent is archived afterwards. `npm run typecheck` type-checks the code.
 
 ## Continuous integration
 
-The public [GitHub mirror](https://github.com/Pyratzlabs/paseo-rooms) runs
-quality/build checks, relay and room tests, and plugin distribution verification
-on pushes to `main`, pull requests, and manual workflow runs. It uses Node.js 22
-and the same verification commands as GitLab, with no deployment secrets.
+The official [GitHub repository](https://github.com/Pyratzlabs/paseo-rooms) runs
+quality/build checks, relay and room tests, plugin distribution verification,
+and Pages artifact checks on pull requests and main-branch updates. Development
+and pull requests now use GitHub exclusively.
 
-GitLab remains the development source and owns relay deployment and Pages.
-After changes merge there, update the public mirror with a fast-forward push of
-GitLab's `main`; GitHub does not automatically synchronize from GitLab.
+GitHub Pages publishes the independent browser client after the main-branch
+checks pass. The relay VPS is a separate deployment; its legacy configuration
+is retained as an operator reference, and its secrets are not part of the
+Pages workflow.
 
 ## State
 
@@ -133,3 +134,10 @@ first visit to **Share session** starts the loopback listener; plugin reload,
 disable, update, and daemon shutdown stop it. A Git-hosted release channel and
 package-management flow are planned, but are not the supported installation
 path yet.
+
+## GitHub Pages
+
+The independent room client uses `https://pyratzlabs.github.io/paseo-rooms/`.
+`npm run test:pages` builds and validates the project-path SPA and its deep-link
+fallback. The GitHub CI workflow publishes it only after all main-branch checks
+pass. See [Pages setup and migration](docs/how-to/publish-github-pages.md).

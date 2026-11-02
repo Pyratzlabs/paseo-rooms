@@ -37,10 +37,7 @@ import {
   type SecureEvent,
 } from "./secure-room-client";
 
-function tokenFromPath(): string | null {
-  const parts = location.pathname.split("/").filter(Boolean);
-  return parts[0] === "r" && parts.length >= 2 ? parts[1] : null;
-}
+import { tokenFromPath } from "./room-path";
 
 function isParticipant(value: unknown): value is RoomParticipant {
   if (typeof value !== "object" || value === null) return false;
@@ -53,7 +50,7 @@ function isParticipant(value: unknown): value is RoomParticipant {
 }
 
 export default function App() {
-  const token = tokenFromPath();
+  const token = tokenFromPath(location.pathname, import.meta.env.BASE_URL);
   const secureInvite = useRef(secureInviteFromLocation(token));
   const secureSession = useRef<Awaited<
     ReturnType<typeof connectSecureRoom>

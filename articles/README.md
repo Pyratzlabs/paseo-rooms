@@ -26,8 +26,14 @@ The draft uses relative image links so it can be reviewed from the repository. T
 
 External background references: [Paseo](https://paseo.sh/), [official plugin documentation](https://paseo.sh/docs/plugins). Feature and security claims come from this repository and the tested room flow. No usage, performance, or adoption numbers are claimed.
 
-## Release prerequisites observed during preparation
+## Screenshot provenance
 
-- The public GitHub mirror's main branch was still at `5cb8c0d` on 2 November, behind GitLab main (`fd379c0`). Sync the reviewed release to the public mirror before sending readers to its clone instructions. This task did not push the mirror.
-- [Port fix MR !33](https://gitlab.com/pyratzlabs/software/paseo-rooms/-/merge_requests/33) is open with a successful pipeline. Include it in the public release so plugin installation does not compete with Next.js for port 3000. The live local test checkout already has that fix, but GitLab main does not.
-- Nothing in this branch was deployed, and the new DNS name was deliberately left until last. The site URLs in the draft are publication targets, not a claim that the cutover has happened.
+`apps/docs/static/img/examples/gather-planning-room.png` is captured from the actual built Rooms UI. The local-only fixture in `scripts/demo-room.mts` supplies a fictional app, conversation and pending question through the real encrypted room transport; three separate browser clients join as Lina, Noah and Maya, alongside the host. No customer data, real agent invocation, model call, or production invite is used. The caption explicitly identifies the scenario as illustrative.
+
+To reproduce the scene, run `npm run build:pages`, then `node --import tsx scripts/demo-room.mts`. Open the printed local invite in three independent browser contexts and join under those names. The fixture also reproduces the HTTP 404 fallback that GitHub Pages uses for a deep room URL. Stop it when finished; its temporary room data is removed on shutdown.
+
+## Release prerequisites
+
+- The GitHub PR includes the latest room/image/relay work and the existing automatic-port fix, bringing the official repository up to date.
+- GitHub Pages has been enabled with `build_type=workflow` for the public repository. The first publication still requires this PR to merge and its main-branch checks to pass.
+- Complete the separately coordinated relay DNS/TLS cutover before merging the new relay defaults or publishing article links to that hostname. The article is a draft, and no DNS record or production relay was changed here.

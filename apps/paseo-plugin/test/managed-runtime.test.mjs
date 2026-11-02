@@ -57,7 +57,7 @@ test("the plugin owns an in-process local room runtime", () => {
   assert.match(runtime, /127\.0\.0\.1/);
   assert.match(runtime, /PASEO_ROOMS_PUBLIC_URL/);
   assert.match(runtime, /PASEO_ROOMS_CLIENT_URL/);
-  assert.match(runtime, /paseo-rooms-9eb268\.gitlab\.io/);
+  assert.match(runtime, /pyratzlabs\.github\.io\/paseo-rooms/);
   assert.match(runtime, /PASEO_ROOMS_PUBLIC_DIR/);
   assert.match(runtime, /widget-selected relay supplies its registration key/);
   assert.doesNotMatch(runtime, /RELAY_KEY is required before sharing/);

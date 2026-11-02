@@ -6,7 +6,7 @@ sidebar_position: 5
 
 This is the operator checklist for moving the hosted product, documentation, and default relay from `paseo-rooms.pyratzlabs.fr` to `paseo-rooms.pyratz.com`. It is a prepared cutover; editing the repository alone does not change DNS or the running service.
 
-The GitLab Pages client remains a separate, default frontend. Its configured relay origin moves to the new domain. The plugin's **Pyratz Labs** client preset and the documentation canonical URL also use the new domain. A link's embedded relay remains authoritative, so older links need their original relay hostname to keep working.
+The GitHub Pages client remains a separate, default frontend. Its configured relay origin moves to the new domain. The plugin's **Pyratz Labs** client preset and the documentation canonical URL also use the new domain. A link's embedded relay remains authoritative, so older links need their original relay hostname to keep working.
 
 ## 1. Prepare before changing DNS
 
@@ -28,7 +28,7 @@ That is the relay VPS's public IPv4 address observed on 2 November 2026; confirm
 
 ## 3. Configure and deploy both hostnames
 
-After DNS resolves, set these GitLab CI/CD variables, preserving the existing SSH credentials, deploy target, capacity limits, and proxy configuration:
+After DNS resolves, update these values in the existing relay deployment environment, preserving its SSH credentials, capacity limits, and proxy configuration:
 
 ```dotenv
 ROOMS_DOMAIN=paseo-rooms.pyratz.com
@@ -36,7 +36,7 @@ ROOMS_HOSTNAMES=paseo-rooms.pyratz.com,paseo-rooms.pyratzlabs.fr
 RELAY_AUTH_MODE=open
 ```
 
-Deploy the reviewed migration revision through the existing main-branch pipeline. CI passes `ROOMS_HOSTNAMES` into `compose.proxy.yml`; nginx-proxy and acme-companion use the same list for routing and TLS. The old and new hostnames reach **one** relay instance, not two competing route tables. Certificate issuance must succeed for both names.
+Deploy the reviewed GitHub revision to the relay VPS through the operator’s existing deployment flow, and use `compose.proxy.yml`. The public GitHub workflow publishes the browser client only; it does not deploy the VPS or manage its secrets. The retained `.gitlab-ci.yml` is a legacy record of that relay deployment, not the new public development workflow. Both nginx-proxy and acme-companion use `ROOMS_HOSTNAMES` for routing and TLS. The old and new hostnames reach **one** relay instance, not two competing route tables. Certificate issuance must succeed for both names.
 
 A relay container replacement interrupts connections temporarily. Host runtimes should reconnect and register their rooms again. Avoid restarting the host plugins during this check, because their process-local room keys would be lost.
 
