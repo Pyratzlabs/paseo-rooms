@@ -92,6 +92,78 @@ test("projects AskUserQuestion prompts without exposing raw tool input", () => {
   });
 });
 
+// Shape emitted by Paseo 0.7.2's Codex provider. Responses use headers,
+// unlike Claude's AskUserQuestion, which uses the full question text.
+const codexQuestion = {
+  id: "permission-codex-question",
+  kind: "question",
+  name: "request_user_input",
+  title: "Question",
+  input: {
+    questions: [
+      {
+        id: "scope",
+        header: "Scope",
+        question: "Which scope should we use?",
+        options: [{ label: "Small", description: "Minimal change" }],
+        isOther: true,
+      },
+      {
+        id: "notes",
+        header: "Notes",
+        question: "What else should we know?",
+        options: [],
+      },
+    ],
+    private: "server-only",
+  },
+};
+
+test("projects Codex request_user_input choices and text-only questions", () => {
+  assert.deepEqual(projectRoomQuestion(codexQuestion)?.prompts, [
+    {
+      question: "Which scope should we use?",
+      header: "Scope",
+      options: [{ label: "Small", description: "Minimal change" }],
+      multiSelect: false,
+      allowOther: true,
+    },
+    {
+      question: "What else should we know?",
+      header: "Notes",
+      options: [],
+      multiSelect: false,
+      allowOther: true,
+    },
+  ]);
+});
+
+test("rebuilds Codex answers keyed by header while preserving original input", () => {
+  assert.deepEqual(buildRoomQuestionUpdatedInput(codexQuestion, {
+    answers: [
+      { questionIndex: 0, optionLabels: ["Small"] },
+      { questionIndex: 1, optionLabels: [], other: "Check billing" },
+    ],
+  }), {
+    ...codexQuestion.input,
+    answers: { Scope: "Small", Notes: "Check billing" },
+  });
+});
+
+test("rejects free text for Codex choices without an Other path", () => {
+  const request = {
+    ...codexQuestion,
+    input: { questions: [{ ...codexQuestion.input.questions[0], isOther: false }] },
+  };
+  assert.equal(projectRoomQuestion(request)?.prompts[0]?.allowOther, false);
+  assert.equal(buildRoomQuestionUpdatedInput(request, {
+    answers: [{ questionIndex: 0, optionLabels: [], other: "Unlisted" }],
+  }), null);
+  assert.equal(buildRoomQuestionUpdatedInput(request, {
+    answers: [{ questionIndex: 0, optionLabels: ["Unlisted"] }],
+  }), null);
+});
+
 test("projects only the explicit ExitPlanMode approval capability", () => {
   const request = {
     id: "plan-1",
