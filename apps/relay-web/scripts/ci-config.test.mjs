@@ -38,7 +38,7 @@ test("proxy deployment restricts its raw HTTP health-check port to loopback", ()
 });
 
 test("all GitLab jobs target the dedicated paseo-rooms runner", () => {
-  const jobs = ["quality", "tests", "plugin-verify", "deploy", "pages"];
+  const jobs = ["quality", "tests", "plugin-verify", "deploy"];
 
   for (const job of jobs) {
     assert.match(
@@ -146,26 +146,29 @@ test("quality and behavior checks are separate CI jobs", () => {
   assert.match(deployScript, /npm run build:web/);
 });
 
-test("GitLab Pages publishes a relay-configured room SPA after verification", () => {
-  assert.match(config, /^pages:[\s\S]*?^  stage: deploy$/m);
+test("GitHub Pages publishes the validated project-path SPA after all checks", async () => {
+  const workflow = await readFile(
+    new URL("../../../.github/workflows/ci.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(workflow, /npm run test:pages/);
   assert.match(
-    config,
-    /VITE_PASEO_ROOMS_RELAY_ORIGIN=https:\/\/paseo-rooms\.pyratzlabs\.fr npm run build:web/,
+    workflow,
+    /needs: \[quality, tests, plugin-verify, pages-build\]/,
   );
   assert.match(
-    config,
-    /cp apps\/relay-web\/public\/room\.html pages-public\/index\.html/,
+    workflow,
+    /if: github.ref == 'refs\/heads\/main' && github.event_name != 'pull_request'/,
   );
-  assert.match(
+  assert.match(workflow, /path: \.pages-site/);
+  assert.match(workflow, /pages: write/);
+  assert.match(workflow, /id-token: write/);
+  assert.match(workflow, /name: github-pages/);
+  assert.doesNotMatch(
     config,
-    /cp apps\/relay-web\/public\/room\.html pages-public\/404\.html/,
+    /^pages:/m,
+    "the retired client must not get another GitLab publisher",
   );
-  assert.match(config, /publish: pages-public/);
-  assert.match(
-    config,
-    /^pages:[\s\S]*?needs:[\s\S]*?job: quality\n      artifacts: false/m,
-  );
-  assert.match(config, /^pages:[\s\S]*?CI_COMMIT_BRANCH == "main"/m);
 });
 
 test("the local room server builds the documentation site before starting", () => {
@@ -268,13 +271,19 @@ test("CI schedules only deployments with complete registration and SSH settings"
       true,
     );
   }
-  for (const mode of [null, "", "open"]) {
+  for (const domain of [
+    "paseo-rooms.pyratz.com",
+    "paseo-rooms.pyratzlabs.fr",
+  ]) {
+    for (const mode of [null, "", "open"]) {
+      assert.equal(
+        scheduled({ ROOMS_DOMAIN: domain, RELAY_AUTH_MODE: mode }),
+        true,
+      );
+    }
     assert.equal(
-      scheduled({
-        ROOMS_DOMAIN: "paseo-rooms.pyratzlabs.fr",
-        RELAY_AUTH_MODE: mode,
-      }),
-      true,
+      scheduled({ ROOMS_DOMAIN: domain, RELAY_AUTH_MODE: "key" }),
+      false,
     );
   }
   assert.equal(scheduled({ RELAY_AUTH_MODE: "open" }), true);
@@ -437,6 +446,13 @@ ${block.replace(/^      /gm, "")}`;
   const mutationOutput = join(directory, "mutations");
   const cases = [
     {
+      domain: "paseo-rooms.pyratz.com",
+      hostnames: "paseo-rooms.pyratz.com,paseo-rooms.pyratzlabs.fr",
+      mode: "",
+      key: "",
+      expected: "open",
+    },
+    {
       domain: "paseo-rooms.pyratzlabs.fr",
       mode: "",
       key: "",
@@ -516,6 +532,7 @@ ${block.replace(/^      /gm, "")}`;
       trusted = "",
       maxHosts = "512",
       maxPerSource = "48",
+      hostnames = "",
     } of cases) {
       rmSync(output, { force: true });
       rmSync(mutationOutput, { force: true });
@@ -529,6 +546,7 @@ ${block.replace(/^      /gm, "")}`;
           DEPLOY_SSH_TARGET: "fixture-host",
           DEPLOY_REMOTE_DIR: "/fixture",
           ROOMS_DOMAIN: domain,
+          ROOMS_HOSTNAMES: hostnames,
           RELAY_AUTH_MODE: mode,
           RELAY_KEY: key,
           RELAY_TRUSTED_PROXY_ADDRESSES: trusted,
@@ -553,6 +571,11 @@ ${block.replace(/^      /gm, "")}`;
           new RegExp(`^RELAY_AUTH_MODE=${expected}$`, "m"),
         );
         assert.match(environment, new RegExp(`^RELAY_KEY=${key}$`, "m"));
+        assert.ok(
+          environment
+            .split("\n")
+            .includes(`ROOMS_HOSTNAMES=${hostnames || domain}`),
+        );
         assert.match(environment, /^RELAY_MAX_HOSTS=512$/m);
         assert.match(environment, /^RELAY_MAX_HOSTS_PER_SOURCE=48$/m);
         assert.ok(

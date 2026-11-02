@@ -16,6 +16,8 @@ const sidebars: SidebarsConfig = {
         "how-to/manage-share-links",
         "how-to/choose-a-client-and-relay",
         "how-to/run-your-own-relay",
+        "how-to/publish-github-pages",
+        "how-to/migrate-hosted-domain",
       ],
     },
     {
@@ -26,7 +28,11 @@ const sidebars: SidebarsConfig = {
     {
       type: "category",
       label: "Explanation",
-      items: ["explanation/architecture", "explanation/security-and-privacy"],
+      items: [
+        "explanation/architecture",
+        "explanation/security-and-privacy",
+        "explanation/why-rooms",
+      ],
     },
   ],
 };

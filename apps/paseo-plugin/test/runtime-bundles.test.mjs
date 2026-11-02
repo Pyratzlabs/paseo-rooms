@@ -80,7 +80,7 @@ test("runtime bundles activate independently and keep room authority server-side
       for (const [relay, registration, saved, keyVisible, disabled] of [
         ["", "open", false, false, false],
         ["   ", "open", false, false, false],
-        ["wss://paseo-rooms.pyratzlabs.fr", "key", true, false, false],
+        ["wss://paseo-rooms.pyratz.com", "key", true, false, false],
         ["wss://custom.example.com", "key", false, true, true],
         ["wss://custom.example.com", "open", false, false, false],
         ["wss://custom.example.com", "key", true, false, false],

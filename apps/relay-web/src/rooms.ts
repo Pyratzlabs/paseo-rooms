@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { routeTokenForSecret } from "./relay/route-ownership.js";
 import type { RegisteredRoute } from "./relay/protocol.js";
+import { deleteRoomAttachments } from "./room-attachments.js";
 import {
   exportPublicKey,
   generateKeyPair,
@@ -145,7 +146,7 @@ export function toPublicRoom(room: AnyRoom): PublicRoom {
 }
 
 export function publicRoomUrl(room: AnyRoom, baseUrl: string): string {
-  const url = `${baseUrl}/r/${room.token}`;
+  const url = `${baseUrl.replace(/\/+$/, "")}/r/${room.token}`;
   if (!isSecureRoom(room)) return url;
   const invite = `${url}#v=2&i=${encodeURIComponent(room.inviteSecret)}&hp=${encodeURIComponent(room.hostPublicKey)}`;
   return room.relayOrigin
@@ -174,6 +175,7 @@ export function relayRoutes(relayOrigin?: string): RegisteredRoute[] {
 }
 
 export function deleteRoom(token: string): boolean {
+  deleteRoomAttachments(token);
   const deletedSecure = secureRooms.delete(token);
   const deletedLegacy = rooms.delete(token);
   if (deletedLegacy) persist();

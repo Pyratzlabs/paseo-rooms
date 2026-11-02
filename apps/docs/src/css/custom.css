@@ -51,3 +51,32 @@
 .theme-doc-markdown code {
   border: 1px solid #d4dde4;
 }
+
+/* Keep diagram labels readable on phones; the surrounding text supplies a summary. */
+.rooms-diagram {
+  overflow-x: auto;
+  margin: 1.5rem 0 0.5rem;
+  border: 1px solid #d4dde4;
+  border-radius: 14px;
+  background: #f3f6f8;
+}
+.rooms-diagram img {
+  display: block;
+  width: 100%;
+  min-width: 680px;
+  max-width: none;
+}
+.rooms-diagram:focus-visible {
+  outline: 3px solid var(--ifm-color-primary);
+  outline-offset: 3px;
+}
+.rooms-diagram-hint {
+  display: none;
+}
+@media (max-width: 700px) {
+  .rooms-diagram-hint {
+    display: block;
+    color: var(--ifm-color-emphasis-700);
+    font-size: 0.875rem;
+  }
+}

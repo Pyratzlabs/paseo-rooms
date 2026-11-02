@@ -12,6 +12,7 @@
 
 import { setTimeout as nodeSetTimeout, clearTimeout } from "node:timers";
 import { WebSocket } from "ws";
+import { RelayOutbound } from "./relay-outbound.js";
 import {
   matchPublicRoute,
   MAX_HOST_CONTROL_BYTES,
@@ -124,7 +125,8 @@ export interface ApiResponse {
  * `joinRoom` cannot tell them apart.
  */
 export interface RoomSocket {
-  send(data: string): void;
+  readonly bufferedAmount?: number;
+  send(data: string): void | Promise<void>;
   close(code?: number, reason?: string): void;
   /** Register a close callback (fires once, whoever closed first). */
   onClose(handler: () => void): void;
@@ -148,6 +150,8 @@ export interface RelayClientOptions extends RelayClientHooks {
   /** Backoff bounds; overridable so tests do not wait seconds. */
   minBackoffMs?: number;
   maxBackoffMs?: number;
+  /** Maximum silence between relay pings (normally sent every 30 seconds). */
+  heartbeatTimeoutMs?: number;
   log?: (line: string) => void;
 }
 
@@ -178,12 +182,24 @@ export interface RelayClient {
 export function startRelayClient(options: RelayClientOptions): RelayClient {
   const minBackoff = options.minBackoffMs ?? 1_000;
   const maxBackoff = options.maxBackoffMs ?? 30_000;
+  const heartbeatTimeoutMs = options.heartbeatTimeoutMs ?? 90_000;
+  if (
+    !Number.isSafeInteger(heartbeatTimeoutMs) ||
+    heartbeatTimeoutMs <= 0 ||
+    heartbeatTimeoutMs > 2_147_483_647
+  )
+    throw new Error("invalid relay heartbeat timeout");
   const log = options.log ?? ((line: string) => console.log(line));
 
   let ws: WebSocket | null = null;
   let stopped = false;
   let backoff = minBackoff;
   let retryTimer: NodeJS.Timeout | null = null;
+  let heartbeatTimer: NodeJS.Timeout | null = null;
+  function clearHeartbeat(): void {
+    if (heartbeatTimer) clearTimeout(heartbeatTimer);
+    heartbeatTimer = null;
+  }
   const connectionWaiters = new Set<{
     resolve(): void;
     reject(error: Error): void;
@@ -276,9 +292,41 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
   }
   /** Virtual browser sockets, keyed by the relay's per-socket id. */
   const sockets = new Map<string, VirtualSocket>();
+  let outbound: RelayOutbound | null = null;
 
-  function send(frame: LaptopFrame): void {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(frame));
+  function send(frame: LaptopFrame): Promise<void> {
+    if (
+      ws?.readyState === WebSocket.OPEN &&
+      frame.type === "ws_event" &&
+      frame.event === "close"
+    )
+      return outbound!.send(
+        `close:${frame.id}`,
+        JSON.stringify(frame),
+        () => {},
+      );
+    if (ws?.readyState === WebSocket.OPEN)
+      return outbound!.control(
+        JSON.stringify(frame),
+        frame.type === "pong" ? "pong" : undefined,
+      );
+    return Promise.resolve();
+  }
+  function httpUnavailable(output: RelayOutbound, id: string): void {
+    if (outbound !== output || ws?.readyState !== WebSocket.OPEN) return;
+    void output.send(
+      `http:${id}`,
+      JSON.stringify({
+        v: 1,
+        type: "http_response",
+        id,
+        status: 503,
+        headers: { "content-type": "application/json" },
+        bodyB64: Buffer.from('{"error":"relay busy"}').toString("base64"),
+      }),
+      () => {},
+      MAX_HOST_CONTROL_BYTES,
+    );
   }
 
   function resolveConnectionWaiters(): void {
@@ -299,6 +347,9 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
 
   /** A relay-forwarded browser socket, dressed up as a local room socket. */
   class VirtualSocket implements RoomSocket {
+    get bufferedAmount(): number {
+      return this.output.ownerBytes(`ws:${this.id}`);
+    }
     private closed = false;
     private handlers: Array<() => void> = [];
     private messageHandlers: Array<(data: string) => void> = [];
@@ -306,30 +357,40 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     constructor(
       readonly id: string,
       readonly protocol: RoomProtocolVersion,
+      private output: RelayOutbound,
     ) {}
 
-    send(data: string): void {
+    send(data: string): void | Promise<void> {
       if (this.closed) return;
-      send({
-        v: 1,
-        type: "ws_event",
-        id: this.id,
-        event: "message",
-        dataB64: Buffer.from(data).toString("base64"),
-      });
+      return this.output.send(
+        `ws:${this.id}`,
+        JSON.stringify({
+          v: 1,
+          type: "ws_event",
+          id: this.id,
+          event: "message",
+          dataB64: Buffer.from(data).toString("base64"),
+        }),
+        () => this.close(),
+      );
     }
 
     /** Close initiated by us (revocation, subscription failure): tell the relay. */
     close(): void {
       if (this.closed) return;
-      send({ v: 1, type: "ws_event", id: this.id, event: "close" });
       this.remoteClosed();
+      void this.output.send(
+        `close:${this.id}`,
+        JSON.stringify({ v: 1, type: "ws_event", id: this.id, event: "close" }),
+        () => {},
+      );
     }
 
     /** Close initiated by the browser or by losing the relay: local teardown. */
     remoteClosed(): void {
       if (this.closed) return;
       this.closed = true;
+      this.output.dropOwner(`ws:${this.id}`);
       sockets.delete(this.id);
       for (const handler of this.handlers) handler();
       this.handlers = [];
@@ -360,10 +421,32 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     if (stopped) return;
     const socket = new WebSocket(options.url, {
       headers: options.key ? { "x-relay-key": options.key } : {},
+      // A black-holed reconnect must not remain in CONNECTING indefinitely.
+      handshakeTimeout: heartbeatTimeoutMs,
     });
     ws = socket;
+    const output = new RelayOutbound(socket, (error) => {
+      log(`[relay-client] ${error.message}`);
+      socket.close(1013, "relay output unavailable");
+    });
+    outbound = output;
+
+    const awaitHeartbeat = (): void => {
+      clearHeartbeat();
+      heartbeatTimer = setTimeout(() => {
+        heartbeatTimer = null;
+        if (stopped || socket !== ws) return;
+        log("[relay-client] heartbeat timed out; terminating stale connection");
+        // A graceful close also waits on the broken network. Termination emits
+        // close locally, which runs the existing cleanup/re-registration path.
+        socket.terminate();
+      }, heartbeatTimeoutMs);
+      heartbeatTimer.unref?.();
+    };
 
     socket.on("open", () => {
+      if (stopped || socket !== ws) return;
+      awaitHeartbeat();
       backoff = minBackoff;
       resolveConnectionWaiters();
       const snapshot = options.currentRoutes?.() ?? [];
@@ -387,6 +470,7 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     });
 
     socket.on("message", (data) => {
+      if (socket !== ws) return;
       const frame = parseRelayFrame(
         typeof data === "string" ? data : data.toString(),
       );
@@ -394,6 +478,7 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
 
       switch (frame.type) {
         case "ping":
+          awaitHeartbeat();
           send({ v: 1, type: "pong", t: frame.t });
           break;
 
@@ -433,15 +518,25 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
                 ),
               };
             }
-            send({
-              v: 1,
-              type: "http_response",
-              id: frame.id,
-              status: response.status,
-              headers: response.headers,
-              bodyB64: response.body.toString("base64"),
-            });
-          })();
+            if (outbound !== output) return;
+            if (response.body.length > MAX_HOST_CONTROL_BYTES) {
+              httpUnavailable(output, frame.id);
+              return;
+            }
+            await output.send(
+              `http:${frame.id}`,
+              JSON.stringify({
+                v: 1,
+                type: "http_response",
+                id: frame.id,
+                status: response.status,
+                headers: response.headers,
+                bodyB64: response.body.toString("base64"),
+              }),
+              () => {},
+              MAX_HOST_CONTROL_BYTES,
+            );
+          })().catch(() => httpUnavailable(output, frame.id));
           break;
 
         case "ws_event":
@@ -451,7 +546,8 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
               true,
             );
             if (!route) return;
-            const virtual = new VirtualSocket(frame.id, route.protocol);
+            sockets.get(frame.id)?.remoteClosed();
+            const virtual = new VirtualSocket(frame.id, route.protocol, output);
             sockets.set(frame.id, virtual);
             void options
               .openSocket(frame.path ?? "/", virtual)
@@ -461,6 +557,15 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
               .catch(() => virtual.close());
           } else if (frame.event === "message") {
             const socket = sockets.get(frame.id);
+            if (!socket) {
+              void send({
+                v: 1,
+                type: "ws_event",
+                id: frame.id,
+                event: "close",
+              });
+              return;
+            }
             const maximum =
               socket?.protocol === 2 ? MAX_V2_RELAY_EVENT_B64_CHARS : 4096;
             if (frame.dataB64 && frame.dataB64.length <= maximum) {
@@ -482,6 +587,9 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
 
     const reconnect = (): void => {
       if (socket !== ws) return; // superseded
+      clearHeartbeat();
+      output.close();
+      outbound = null;
       ws = null;
       clearRouteRetries();
       rejectConnectionWaiters(
@@ -559,9 +667,15 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
             registrationWaiters.set(route.token, { resolve, reject, timer });
           }),
       );
-      send({ v: 1, type: "register", tokens: [], routes });
+      const confirmed = Promise.all(waits);
+      void confirmed.catch(() => {});
       try {
-        await Promise.all(waits);
+        void send({ v: 1, type: "register", tokens: [], routes }).catch(
+          (error) => {
+            for (const route of routes) finishRegistration(route.token, error);
+          },
+        );
+        await confirmed;
       } catch (error) {
         for (const route of routes) {
           cancelRoute(route.token);
@@ -604,6 +718,7 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
     connected: () => ws !== null && ws.readyState === WebSocket.OPEN,
     close: () => {
       stopped = true;
+      clearHeartbeat();
       clearRouteRetries();
       if (retryTimer) clearTimeout(retryTimer);
       rejectConnectionWaiters(new Error("relay client closed"));
@@ -611,6 +726,8 @@ export function startRelayClient(options: RelayClientOptions): RelayClient {
         new Error("Relay client closed before room registration was confirmed"),
       );
       cancelledRoutes.clear();
+      outbound?.close();
+      outbound = null;
       dropAllSockets();
       ws?.close();
       ws = null;

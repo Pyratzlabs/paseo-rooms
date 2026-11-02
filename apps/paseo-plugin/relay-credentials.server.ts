@@ -199,7 +199,7 @@ export class RelayCredentialStore {
       : credentialOrigin(
           this.env.PASEO_ROOMS_PUBLIC_URL ??
             this.env.PUBLIC_BASE_URL ??
-            "https://paseo-rooms.pyratzlabs.fr",
+            "https://paseo-rooms.pyratz.com",
         );
     if (environmentKey && configuredOrigin === origin)
       return { key: environmentKey, source: "environment" };

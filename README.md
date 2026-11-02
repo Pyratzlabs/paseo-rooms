@@ -1,12 +1,19 @@
 # paseo-rooms
 
-Proof of concept: **share one Paseo coding-agent session with a collaborator via
-a capability URL**, without giving them access to your Paseo daemon.
+Share an existing Paseo coding-agent session with teammates or clients through
+one invitation link. Browser participants can follow the live conversation,
+send messages and images, and answer supported questions while the host keeps
+the Paseo connection and workspace on their machine.
 
-Two humans open the same `http://localhost:3000/r/<token>` link in separate
-browsers, both see the agent's full conversation, both can send messages to the
-same running agent, and replies stream live to everyone. The link grants access
-to exactly one agent — nothing else on the daemon.
+- [Product](https://paseo-rooms.pyratz.com/)
+- [Documentation](https://paseo-rooms.pyratz.com/docs/)
+- [Self-host the relay and frontend](docs/how-to/run-your-own-relay.md)
+- [Article draft and shared figures](articles/README.md)
+
+New rooms use encrypted browser-to-host channels through the relay. The client
+JavaScript must come from a trusted origin, and an invite grants meaningful
+conversation authority: participants can influence the agent's host-side tool
+use. Read [Security and privacy](docs/explanation/security-and-privacy.md).
 
 This monorepo keeps the deployed relay/web application and the companion Paseo
 desktop plugin versioned and verified together:
@@ -78,21 +85,23 @@ The agent is archived afterwards. `npm run typecheck` type-checks the code.
 
 ## Continuous integration
 
-The public [GitHub mirror](https://github.com/Pyratzlabs/paseo-rooms) runs
-quality/build checks, relay and room tests, and plugin distribution verification
-on pushes to `main`, pull requests, and manual workflow runs. It uses Node.js 22
-and the same verification commands as GitLab, with no deployment secrets.
+The official [GitHub repository](https://github.com/Pyratzlabs/paseo-rooms) runs
+quality/build checks, relay and room tests, plugin distribution verification,
+and Pages artifact checks on pull requests and main-branch updates. Development
+and pull requests now use GitHub exclusively.
 
-GitLab remains the development source and owns relay deployment and Pages.
-After changes merge there, update the public mirror with a fast-forward push of
-GitLab's `main`; GitHub does not automatically synchronize from GitLab.
+GitHub Pages publishes the independent browser client after the main-branch
+checks pass. The relay VPS is a separate deployment; its legacy configuration
+is retained as an operator reference, and its secrets are not part of the
+Pages workflow.
 
 ## State
 
-- `data/rooms.json` — `share_token -> agent` mappings (the only state this
-  service owns; the conversation lives in Paseo).
-- `data/admin-token` — bearer token required to create rooms; the `share`
-  script reads it locally. Collaborators never need it.
+- Encrypted v2 rooms and their images are held in host-process memory. Process
+  restarts invalidate those links; the timeline itself remains in Paseo.
+- `data/admin-token` is the local credential used to create rooms. It is never
+  part of a participant's invitation.
+- `data/rooms.json` belongs to the legacy HTTP-room workflow, not v2 room storage.
 
 ## Plugin
 
@@ -125,3 +134,10 @@ first visit to **Share session** starts the loopback listener; plugin reload,
 disable, update, and daemon shutdown stop it. A Git-hosted release channel and
 package-management flow are planned, but are not the supported installation
 path yet.
+
+## GitHub Pages
+
+The independent room client uses `https://pyratzlabs.github.io/paseo-rooms/`.
+`npm run test:pages` builds and validates the project-path SPA and its deep-link
+fallback. The GitHub CI workflow publishes it only after all main-branch checks
+pass. See [Pages setup and migration](docs/how-to/publish-github-pages.md).

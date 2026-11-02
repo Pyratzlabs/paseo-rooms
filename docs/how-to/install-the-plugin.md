@@ -26,10 +26,16 @@ Paseo daemon host.
 
 ## Install from a local checkout
 
-Contributors can install the root plugin directly:
+Clone a trusted revision, then install the root plugin on the machine that runs the Paseo daemon:
 
 ```bash
-paseo plugin install /path/to/paseo-rooms
+git clone https://github.com/Pyratzlabs/paseo-rooms.git ~/paseo-rooms
+```
+
+The examples below use that local checkout:
+
+```bash
+paseo plugin install "$HOME/paseo-rooms"
 paseo plugin reload paseo-rooms
 ```
 
@@ -48,16 +54,34 @@ its local token under the Paseo data directory. It starts on the first Share
 session use and is stopped when the plugin reloads, is disabled or updated, or
 when the Paseo daemon shuts down—there is no separate service to install.
 
-The hosted Pyratz Labs relay allows public registration: no registration key
+The hosted Pyratz Labs relay at `https://paseo-rooms.pyratz.com` allows public registration: no registration key
 is needed. Keep **Automatic discovery** selected in the Share session panel.
 A private relay may require a key from its operator; enter it in the panel or
 configure `PASEO_ROOMS_RELAY_KEY` in the Paseo daemon's environment. For a
 custom default relay, set `PASEO_ROOMS_PUBLIC_URL` and
 `PASEO_ROOMS_RELAY_URL`, with a key only when that relay requires one.
 
-New public-room links use `https://paseo-rooms-9eb268.gitlab.io`, a GitLab Pages
+New public-room links use `https://pyratzlabs.github.io/paseo-rooms`, a GitHub Pages
 client that connects to the public relay. `PASEO_ROOMS_CLIENT_URL` overrides
 only the browser client origin placed in newly created links, for example for a
 separately hosted static client. The relay stays at `PASEO_ROOMS_PUBLIC_URL`.
 The Share session panel can also choose client and relay destinations per new
 link; see [Choose a room client and relay](choose-a-client-and-relay).
+
+## Update an existing directory installation
+
+```bash
+git -C "$HOME/paseo-rooms" pull --ff-only
+(cd "$HOME/paseo-rooms" && npm ci --ignore-scripts --no-audit --no-fund && npm run verify:plugin-distribution)
+paseo plugin reload paseo-rooms
+```
+
+Keep using the directory shown by `paseo plugin ls`; adjust the path above if
+you installed elsewhere. Do not install the same plugin ID again to update it.
+Prepare dependencies and matching distribution bundles before reloading a
+changed directory checkout. The install manifest also performs these steps
+when a directory is first installed.
+The unqualified name `paseo-rooms` is not a published npm package.
+
+Changes to default origins apply to new links. An explicitly saved relay or
+client in Advanced settings remains selected until you change it.

@@ -18,8 +18,8 @@ export interface ManagedRoomServer {
   started: boolean;
 }
 
-const DEFAULT_RELAY_PUBLIC_URL = "https://paseo-rooms.pyratzlabs.fr";
-const DEFAULT_CLIENT_URL = "https://paseo-rooms-9eb268.gitlab.io";
+const DEFAULT_RELAY_PUBLIC_URL = "https://paseo-rooms.pyratz.com";
+const DEFAULT_CLIENT_URL = "https://pyratzlabs.github.io/paseo-rooms";
 
 let managed: Promise<StartedRoomServer> | null = null;
 
@@ -36,13 +36,21 @@ export function configuredRelayOrigin(): string {
 }
 
 function configureLocalRuntime(): void {
-  const port = Number(process.env.PASEO_ROOMS_PORT ?? 3000);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error("paseo-rooms: PASEO_ROOMS_PORT must be a valid TCP port");
+  const configuredPort = process.env.PASEO_ROOMS_PORT;
+  const port = Number(configuredPort ?? 0);
+  if (
+    configuredPort?.trim() === "" ||
+    !Number.isInteger(port) ||
+    port < 0 ||
+    port > 65535
+  ) {
+    throw new Error(
+      "paseo-rooms: PASEO_ROOMS_PORT must be a valid TCP port (0 for automatic allocation)",
+    );
   }
   // PASEO_ROOMS_PUBLIC_URL is retained as the public relay origin for
   // compatibility. PASEO_ROOMS_CLIENT_URL controls the static client origin
-  // emitted in new links, allowing GitLab Pages to serve the UI separately.
+  // emitted in new links, allowing GitHub Pages to serve the UI separately.
   const configuredRelayPublicBaseUrl =
     process.env.PASEO_ROOMS_PUBLIC_URL ?? process.env.PUBLIC_BASE_URL;
   const relayPublicBaseUrl =
@@ -51,7 +59,7 @@ function configureLocalRuntime(): void {
   const clientUrl = new URL(
     process.env.PASEO_ROOMS_CLIENT_URL ??
       // A custom relay normally owns its client too. The hosted default uses
-      // the independently deployable GitLab Pages client.
+      // the independently deployable GitHub Pages client.
       (configuredRelayPublicBaseUrl ? relayPublicBaseUrl : DEFAULT_CLIENT_URL),
   );
   const relayUrl =

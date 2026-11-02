@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Markdown } from "./Markdown";
 import type { RoomQuestion, RoomQuestionAnswer } from "../api";
 import type { DisplayItem } from "../timeline";
+import { RoomImage } from "./RoomImage";
+import type { RoomImageCache } from "../image-cache";
 
 export function Timeline({
   items,
@@ -9,6 +11,7 @@ export function Timeline({
   onAnswer,
   onAnswerPrompts,
   answering,
+  imageCache = null,
 }: {
   items: DisplayItem[];
   questions: RoomQuestion[];
@@ -18,6 +21,7 @@ export function Timeline({
     answers: RoomQuestionAnswer[],
   ) => void;
   answering: string | null;
+  imageCache?: RoomImageCache | null;
 }) {
   return (
     <>
@@ -27,6 +31,9 @@ export function Timeline({
             <article className="message user-message" key={item.id}>
               <span className="author">{item.author}</span>
               <Markdown text={item.text} />
+              {item.images?.map((image) => (
+                <RoomImage image={image} cache={imageCache} key={image.id} />
+              ))}
             </article>
           );
         if (item.kind === "assistant")

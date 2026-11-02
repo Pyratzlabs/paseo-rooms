@@ -11,7 +11,7 @@ test("the static client uses its configured relay instead of its page origin", (
   assert.equal(
     relayOriginFor(
       "https://paseo-rooms.pyratzlabs.fr/",
-      "https://pyratzlabs.gitlab.io",
+      "https://pyratzlabs.github.io",
     ),
     "https://paseo-rooms.pyratzlabs.fr",
   );
@@ -65,5 +65,20 @@ test("a custom invite relay requires explicit browser confirmation", () => {
       "https://relay.example.test",
     ),
     true,
+  );
+});
+
+test("room routes resolve under the GitHub Pages base without matching other paths", async () => {
+  const { tokenFromPath } = await import("../web/src/room-path.js");
+  assert.equal(
+    tokenFromPath("/paseo-rooms/r/room-id", "/paseo-rooms/"),
+    "room-id",
+  );
+  assert.equal(tokenFromPath("/r/local-id"), "local-id");
+  assert.equal(tokenFromPath("/r/room-id", "/paseo-rooms/"), null);
+  assert.equal(tokenFromPath("/paseo-rooms/", "/paseo-rooms/"), null);
+  assert.equal(
+    tokenFromPath("/paseo-rooms/r/room-id/extra", "/paseo-rooms/"),
+    null,
   );
 });

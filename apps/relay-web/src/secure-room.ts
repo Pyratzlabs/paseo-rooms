@@ -24,6 +24,22 @@ import { RoomPresence, sanitizeParticipantName } from "./presence.js";
 import { parseV2OuterRecord, type V2OuterRecord } from "./relay/protocol.js";
 import { type RoomSocket } from "./relay-client.js";
 import type { RoomQuestionResponse } from "./questions.js";
+import {
+  IMAGE_CAPABILITY,
+  isObject,
+  validId,
+} from "../shared/room-attachments.js";
+import {
+  beginImage,
+  appendImage,
+  finishImage,
+  cancelImage,
+  readImage,
+  disconnectAttachments,
+  decorateRoomItem,
+  submitRoomMessage,
+  submissionStatus,
+} from "./room-attachments.js";
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
@@ -33,12 +49,14 @@ const MAX_PENDING_APP_BYTES = MAX_APP_RECORD_BYTES * 2;
 const MAX_REPLAY_IDS = 512;
 const MAX_PENDING_HANDSHAKES_PER_ROOM = 8;
 const HANDSHAKE_TIMEOUT_MS = 10_000;
+export const SECURE_ROOM_OPERATION_TIMEOUT_MS = 15_000;
 
 interface SecureLiveRoom {
   sessionId: string;
   clients: Set<SecureClient>;
   presence: RoomPresence<SecureClient>;
   unsubscribe: (() => void) | null;
+  subscribing: Promise<void> | null;
 }
 
 interface SecureClient {
@@ -49,6 +67,18 @@ interface SecureClient {
   name: string;
   clientSeq: number;
   hostSeq: number;
+  images: boolean;
+  readWindow: number;
+  readBytes: number;
+  ready: boolean;
+  closed: boolean;
+  work: AbortController;
+  inputLeases: Set<() => void>;
+  output: Promise<void>;
+  outputCount: number;
+  outputBytes: number;
+  initializing: Array<{ kind: string; payload: unknown }>;
+  initializingBytes: number;
   close(): void;
 }
 
@@ -82,12 +112,15 @@ type ClientRecord = {
   sessionId: string;
   seq: number;
   id: string;
-  kind: "message" | "answer" | "answer_prompts";
+  kind: string;
   payload: unknown;
 };
 
 const liveSecureRooms = new Map<string, SecureLiveRoom>();
 const pendingHandshakes = new Map<string, number>();
+const pendingSockets = new Map<string, Set<RoomSocket>>();
+let totalQueuedInputs = 0;
+let totalQueuedBytes = 0;
 
 function randomId(): string {
   return crypto.randomBytes(16).toString("base64url");
@@ -160,9 +193,19 @@ function parseClientRecord(data: string | ArrayBuffer): ClientRecord | null {
       !Number.isSafeInteger(value.seq) ||
       value.seq < 1 ||
       typeof value.id !== "string" ||
-      (value.kind !== "message" &&
-        value.kind !== "answer" &&
-        value.kind !== "answer_prompts")
+      typeof value.kind !== "string" ||
+      ![
+        "message",
+        "answer",
+        "answer_prompts",
+        "image_begin",
+        "image_chunk",
+        "image_finish",
+        "image_cancel",
+        "image_read",
+        "submission_status",
+      ].includes(value.kind) ||
+      value.id.length > 64
     )
       return null;
     return {
@@ -218,12 +261,16 @@ function secureTransport(socket: RoomSocket): Transport {
     onclose: null,
     onerror: null,
     send(data) {
+      if ((socket.bufferedAmount ?? 0) > 256 * 1024) {
+        socket.close(1013, "slow room connection");
+        throw new Error("room connection busy");
+      }
       const bytes =
         typeof data === "string"
           ? textEncoder.encode(data)
           : new Uint8Array(data);
       const type = typeof data === "string" ? "handshake" : "secure";
-      socket.send(
+      return socket.send(
         JSON.stringify({
           v: 2,
           type,
@@ -267,7 +314,10 @@ async function roomSnapshot(
         : null,
       questions: await deps.listRoomQuestions(room.agentId),
     },
-    history: await deps.fetchFullHistory(room.agentId),
+    history: (await deps.fetchFullHistory(room.agentId)).map((entry) => ({
+      ...entry,
+      item: decorateRoomItem(room, entry.item),
+    })),
     participants,
     working: info?.status === "running",
   };
@@ -281,6 +331,7 @@ function getLiveSecureRoom(room: SecureRoom): SecureLiveRoom {
       clients: new Set(),
       presence: new RoomPresence(),
       unsubscribe: null,
+      subscribing: null,
     };
     liveSecureRooms.set(room.token, live);
   }
@@ -293,19 +344,39 @@ async function sendSecure(
   kind: string,
   payload: unknown,
 ): Promise<void> {
-  const record = {
-    v: 2,
-    sessionId: live.sessionId,
-    seq: client.hostSeq + 1,
-    id: randomId(),
-    kind,
-    payload,
-  };
-  const encoded = encodeJson(record);
-  if (encoded.byteLength > MAX_APP_RECORD_BYTES)
-    throw new Error("secure room record exceeds the protocol limit");
-  client.hostSeq += 1;
-  await client.channel.send(encoded);
+  if (client.closed || getRoom(client.room.token) !== client.room)
+    throw new Error("room closed");
+  const bytes = encodeJson(payload).byteLength;
+  if (client.outputCount >= 8 || client.outputBytes + bytes > 128 * 1024) {
+    client.close();
+    throw new Error("slow client");
+  }
+  client.outputCount++;
+  client.outputBytes += bytes;
+  const next = client.output.then(async () => {
+    if (client.closed || getRoom(client.room.token) !== client.room)
+      throw new Error("room closed");
+    const record = {
+      v: 2,
+      sessionId: live.sessionId,
+      seq: client.hostSeq + 1,
+      id: randomId(),
+      kind,
+      payload,
+    };
+    const encoded = encodeJson(record);
+    if (encoded.byteLength > MAX_APP_RECORD_BYTES)
+      throw new Error("secure room record exceeds the protocol limit");
+    client.hostSeq += 1;
+    await client.channel.send(encoded);
+  });
+  client.output = next.catch(() => client.close());
+  try {
+    await next;
+  } finally {
+    client.outputCount--;
+    client.outputBytes -= bytes;
+  }
 }
 
 /**
@@ -363,7 +434,48 @@ function broadcastSecure(
   payload: unknown,
 ): void {
   for (const client of live.clients) {
+    if (!client.ready) {
+      const bytes = encodeJson(payload).byteLength;
+      if (
+        client.initializing.length >= 8 ||
+        client.initializingBytes + bytes > 128 * 1024
+      ) {
+        client.close();
+        continue;
+      }
+      client.initializing.push({ kind, payload });
+      client.initializingBytes += bytes;
+      continue;
+    }
     void sendSecure(live, client, kind, payload).catch(() => client.close());
+  }
+}
+
+function cancelClientWork(client: SecureClient): void {
+  client.work.abort();
+  for (const release of client.inputLeases) release();
+}
+
+async function clientOperation<T>(
+  client: SecureClient,
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const signal = client.work.signal;
+  if (signal.aborted || client.closed) throw new Error("room_client_closed");
+  let cancel!: () => void;
+  const canceled = new Promise<never>((_, reject) => {
+    cancel = () => reject(new Error("room_client_closed"));
+  });
+  signal.addEventListener("abort", cancel, { once: true });
+  const deadline = setTimeout(
+    () => client.close(),
+    SECURE_ROOM_OPERATION_TIMEOUT_MS,
+  );
+  try {
+    return await Promise.race([run(signal), canceled]);
+  } finally {
+    clearTimeout(deadline);
+    signal.removeEventListener("abort", cancel);
   }
 }
 
@@ -377,6 +489,7 @@ async function handleClientRecord(
     room: SecureRoom,
     questionId: string,
     payload: { actionId?: string; answers?: RoomQuestionResponse["answers"] },
+    signal?: AbortSignal,
   ) => Promise<boolean>,
 ): Promise<void> {
   if (record.sessionId !== live.sessionId) {
@@ -392,11 +505,95 @@ async function handleClientRecord(
   }
   client.clientSeq = record.seq;
 
+  if (getRoom(client.room.token) !== client.room || client.closed) return;
+  if (
+    record.kind.startsWith("image_") ||
+    record.kind === "submission_status" ||
+    (record.kind === "message" &&
+      isObject(record.payload) &&
+      record.payload.submissionKey !== undefined)
+  ) {
+    if (
+      !client.images ||
+      !isObject(record.payload) ||
+      !validId(record.payload.requestId)
+    ) {
+      client.close();
+      return;
+    }
+    const requestId = record.payload.requestId;
+    try {
+      let value: unknown;
+      switch (record.kind) {
+        case "image_begin":
+          value = beginImage(client.room, client.memberId, record.payload);
+          break;
+        case "image_chunk":
+          value = appendImage(client.room, client.memberId, record.payload);
+          break;
+        case "image_finish":
+          value = finishImage(client.room, client.memberId, record.payload);
+          break;
+        case "image_cancel":
+          value = cancelImage(client.room, client.memberId, record.payload);
+          break;
+        case "image_read":
+          if (Date.now() - client.readWindow > 60_000) {
+            client.readWindow = Date.now();
+            client.readBytes = 0;
+          }
+          if (client.readBytes >= 16 * 1024 * 1024)
+            throw new Error("read_rate_limited");
+          value = readImage(client.room, record.payload);
+          client.readBytes += 24 * 1024;
+          break;
+        case "submission_status":
+          value = submissionStatus(client.room, record.payload.submissionKey);
+          break;
+        default:
+          value = await submitRoomMessage(
+            client.room,
+            client.memberId,
+            client.name,
+            record.payload,
+            () => checkRateLimit(client.room.token),
+            (text, options, signal) =>
+              deps.sendToAgent(client.room.agentId, text, options, signal),
+          );
+      }
+      if (!client.closed)
+        await sendSecure(live, client, "response", {
+          requestId,
+          ok: true,
+          value,
+        });
+    } catch (cause) {
+      const code =
+        cause instanceof Error && /^[a-z_]{1,40}$/.test(cause.message)
+          ? cause.message
+          : "request_failed";
+      if (!client.closed)
+        await sendSecure(live, client, "response", {
+          requestId,
+          ok: false,
+          code,
+        });
+    }
+    return;
+  }
+
   if (record.kind === "message") {
     if (!checkRateLimit(client.room.token)) return;
     const message = payloadString(record.payload, "message")?.trim() ?? "";
     if (!message) return;
-    await deps.sendToAgent(client.room.agentId, `[${client.name}]\n${message}`);
+    await clientOperation(client, (signal) =>
+      deps.sendToAgent(
+        client.room.agentId,
+        `[${client.name}]\n${message}`,
+        undefined,
+        signal,
+      ),
+    );
     return;
   }
 
@@ -404,14 +601,24 @@ async function handleClientRecord(
   if (!questionId) return;
   if (record.kind === "answer") {
     const actionId = payloadString(record.payload, "actionId");
-    if (actionId) await answerQuestion(client.room, questionId, { actionId });
+    if (actionId)
+      await clientOperation(client, (signal) =>
+        answerQuestion(client.room, questionId, { actionId }, signal),
+      );
     return;
   }
   const answers = payloadAnswers(record.payload);
   if (answers) {
-    await answerQuestion(client.room, questionId, {
-      answers,
-    });
+    await clientOperation(client, (signal) =>
+      answerQuestion(
+        client.room,
+        questionId,
+        {
+          answers,
+        },
+        signal,
+      ),
+    );
   }
 }
 
@@ -423,6 +630,7 @@ export async function openSecureRoomSocket(
     room: SecureRoom,
     questionId: string,
     payload: { actionId?: string; answers?: RoomQuestionResponse["answers"] },
+    signal?: AbortSignal,
   ) => Promise<boolean>,
   deps: SecureRoomDependencies = defaultDependencies,
 ): Promise<boolean> {
@@ -432,11 +640,29 @@ export async function openSecureRoomSocket(
   if (!room) return false;
 
   const pendingCount = pendingHandshakes.get(room.token) ?? 0;
-  if (pendingCount >= MAX_PENDING_HANDSHAKES_PER_ROOM) {
+  const allClients = [...liveSecureRooms.values()].reduce(
+    (sum, value) => sum + value.clients.size,
+    0,
+  );
+  if (
+    (liveSecureRooms.get(room.token)?.clients.size ?? 0) >= 32 ||
+    allClients >= 128
+  ) {
+    socket.close(1013, "room busy");
+    return true;
+  }
+  if (
+    pendingCount >= MAX_PENDING_HANDSHAKES_PER_ROOM ||
+    [...pendingHandshakes.values()].reduce((sum, count) => sum + count, 0) >=
+      128
+  ) {
     socket.close(1013, "room busy");
     return true;
   }
   pendingHandshakes.set(room.token, pendingCount + 1);
+  const opening = pendingSockets.get(room.token) ?? new Set<RoomSocket>();
+  opening.add(socket);
+  pendingSockets.set(room.token, opening);
   let releasedPending = false;
   const handshakeTimeout = setTimeout(() => {
     if (!releasedPending) socket.close(1008, "handshake timeout");
@@ -445,6 +671,8 @@ export async function openSecureRoomSocket(
     if (releasedPending) return;
     releasedPending = true;
     clearTimeout(handshakeTimeout);
+    opening.delete(socket);
+    if (!opening.size) pendingSockets.delete(room.token);
     const remaining = (pendingHandshakes.get(room.token) ?? 1) - 1;
     if (remaining > 0) pendingHandshakes.set(room.token, remaining);
     else pendingHandshakes.delete(room.token);
@@ -454,11 +682,16 @@ export async function openSecureRoomSocket(
   const transport = secureTransport(socket);
   let client: SecureClient | null = null;
   let admissionStarted = false;
+  let settleAdmission = () => {};
   const pending: Array<string | ArrayBuffer> = [];
   let pendingBytes = 0;
   const removeClient = () => {
+    settleAdmission();
     const leaving = client;
+    if (leaving) cancelClientWork(leaving);
     if (!leaving || !live.clients.delete(leaving)) return;
+    leaving.closed = true;
+    disconnectAttachments(room, leaving.memberId);
     if (live.presence.leave(leaving)) {
       broadcastSecure(live, "presence", {
         type: "presence",
@@ -531,7 +764,10 @@ export async function openSecureRoomSocket(
       return;
     }
 
-    releasePending();
+    if (getRoom(room.token) !== room) {
+      channel.close();
+      return;
+    }
 
     client = {
       socket,
@@ -541,57 +777,153 @@ export async function openSecureRoomSocket(
       name,
       clientSeq: 0,
       hostSeq: 0,
+      images:
+        isObject(join.capabilities) &&
+        join.capabilities[IMAGE_CAPABILITY] === true,
+      readWindow: Date.now(),
+      readBytes: 0,
+      ready: false,
+      closed: false,
+      work: new AbortController(),
+      inputLeases: new Set(),
+      output: Promise.resolve(),
+      outputCount: 0,
+      outputBytes: 0,
+      initializing: [],
+      initializingBytes: 0,
       close() {
+        this.closed = true;
+        cancelClientWork(this);
         channel.close(1000, "closed");
       },
     };
-    live.clients.add(client);
-    live.presence.join(client, name);
-    if (!live.unsubscribe) {
-      live.unsubscribe = await deps.subscribeAgent(
-        room.agentId,
-        ({ event, timestamp }) => {
-          if (event.type === "replacement") {
-            // Secure clients reconnect and receive a fresh encrypted welcome.
-            for (const member of live.clients) member.close();
-            return;
-          }
-          broadcastSecure(live, "event", {
-            type: "stream",
-            event: publicStreamEvent(event),
-            timestamp,
-          });
-        },
-      );
-    }
-
-    const welcomePayload = boundedWelcomePayload(live, client, {
-      memberId: client.memberId,
-      resumeSecret: null,
-      nextClientSeq: 1,
-      ...(await roomSnapshot(room, live.presence.list(), deps)),
+    let initialized!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      initialized = resolve;
     });
-    await sendSecure(live, client, "welcome", welcomePayload);
-    broadcastSecure(live, "presence", {
-      type: "presence",
-      participants: live.presence.list(),
-    });
-
+    settleAdmission = initialized;
+    const activeClient = client;
+    let input = barrier;
+    let queued = 0;
+    let queuedBytes = 0;
     onPlaintext = (next) => {
+      if (activeClient.closed || activeClient.work.signal.aborted) return;
+      const bytes = recordByteLength(next);
+      if (
+        queued >= 4 ||
+        queuedBytes + bytes > 128 * 1024 ||
+        totalQueuedInputs >= 128 ||
+        totalQueuedBytes + bytes > 4 * 1024 * 1024
+      ) {
+        client?.close();
+        return;
+      }
       const record = parseClientRecord(next);
       if (!record || !client) {
         client?.close();
         return;
       }
-      void handleClientRecord(
-        live,
-        client,
-        record,
-        checkRateLimit,
-        deps,
-        answerQuestion,
-      ).catch(() => client?.close());
+      queued++;
+      queuedBytes += bytes;
+      totalQueuedInputs++;
+      totalQueuedBytes += bytes;
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        activeClient.inputLeases.delete(release);
+        queued--;
+        queuedBytes -= bytes;
+        totalQueuedInputs--;
+        totalQueuedBytes -= bytes;
+      };
+      activeClient.inputLeases.add(release);
+      input = input
+        .then(() => {
+          if (
+            activeClient.closed ||
+            activeClient.work.signal.aborted ||
+            getRoom(room.token) !== room
+          )
+            return;
+          return handleClientRecord(
+            live,
+            activeClient,
+            record,
+            checkRateLimit,
+            deps,
+            answerQuestion,
+          );
+        })
+        .catch(() => client?.close())
+        .finally(release);
     };
+    live.clients.add(client);
+    live.presence.join(client, name);
+    if (!live.unsubscribe && !live.subscribing) {
+      live.subscribing = deps
+        .subscribeAgent(room.agentId, ({ event, timestamp }) => {
+          if (event.type === "replacement") {
+            // Secure clients reconnect and receive a fresh encrypted welcome.
+            for (const member of live.clients) member.close();
+            return;
+          }
+          const publicEvent = publicStreamEvent(event);
+          const projected =
+            isObject(publicEvent) && publicEvent.type === "timeline"
+              ? {
+                  ...publicEvent,
+                  item: decorateRoomItem(room, publicEvent.item),
+                }
+              : publicEvent;
+          broadcastSecure(live, "event", {
+            type: "stream",
+            event: projected,
+            timestamp,
+          });
+        })
+        .then((unsubscribe) => {
+          if (
+            liveSecureRooms.get(room.token) !== live ||
+            !live.clients.size ||
+            getRoom(room.token) !== room
+          ) {
+            unsubscribe();
+            return;
+          }
+          live.unsubscribe = unsubscribe;
+        })
+        .finally(() => {
+          live.subscribing = null;
+        });
+    }
+    if (live.subscribing) await live.subscribing;
+    if (client.closed || getRoom(room.token) !== room) return;
+
+    const welcomePayload = boundedWelcomePayload(live, client, {
+      memberId: client.memberId,
+      resumeSecret: null,
+      nextClientSeq: 1,
+      capabilities: client.images ? { [IMAGE_CAPABILITY]: true } : {},
+      ...(await roomSnapshot(room, live.presence.list(), deps)),
+    });
+    await sendSecure(live, client, "welcome", welcomePayload);
+    if (getRoom(room.token) !== room || client.closed) {
+      client.close();
+      return;
+    }
+    const flushing = client.initializing
+      .splice(0)
+      .map((update) => sendSecure(live, client!, update.kind, update.payload));
+    client.ready = true;
+    await Promise.all(flushing);
+    releasePending();
+    initialized();
+    client.initializingBytes = 0;
+    broadcastSecure(live, "presence", {
+      type: "presence",
+      participants: live.presence.list(),
+    });
   };
 
   onPlaintext = (data) => {
@@ -607,6 +939,8 @@ export async function openSecureRoomSocket(
 }
 
 export function closeSecureRoom(token: string): void {
+  for (const socket of pendingSockets.get(token) ?? [])
+    socket.close(1000, "room closed");
   const live = liveSecureRooms.get(token);
   if (!live) return;
   for (const client of live.clients) client.close();

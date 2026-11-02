@@ -81,9 +81,11 @@ every room create/revoke, and reconnects with backoff if the relay restarts.
 See `apps/relay-web/deploy/paseo-rooms.service` for an example systemd **user** unit that
 keeps this running in the background.
 
-## Continuous deploy (GitLab CI)
+## Legacy relay deployment (GitLab CI)
 
-`.gitlab-ci.yml` type-checks and runs relay protocol tests on every push. On
+New development and browser-client publication use the official GitHub repository.
+Its Pages workflow does not deploy the VPS or migrate relay secrets. The
+retained `.gitlab-ci.yml` documents the existing relay deployment. On
 `main`, it deploys the relay using the project runner tagged
 `paseo-rooms`. Configure these GitLab **Settings -> CI/CD -> Variables**:
 
@@ -94,7 +96,7 @@ keeps this running in the background.
   network).
 - `DEPLOY_SSH_TARGET` — e.g. `deployer@192.168.193.100`.
 - `RELAY_AUTH_MODE` — optional override (`open` or `key`). The hosted
-  `paseo-rooms.pyratzlabs.fr` relay defaults to `open`; other domains and LAN
+  `paseo-rooms.pyratz.com` and legacy `paseo-rooms.pyratzlabs.fr` relays default to `open`; other domains and LAN
   deployments default to `key`.
 - `RELAY_KEY` — the shared relay secret, masked; required only in `key` mode.
 - `DEPLOY_REMOTE_DIR` — optional; defaults to `/home/deployer/paseo-rooms`.
@@ -211,3 +213,17 @@ queue limit, and a five-minute guest idle timeout. `createRelay({ limits: ... })
 allows validated overrides for embedding/testing; the executable exposes the
 two host budgets above. Hosting capacity and proxy-level denial-of-service controls
 must be assessed separately before general availability.
+
+## Hostname migration
+
+`ROOMS_DOMAIN` is the canonical hostname. For the existing nginx-proxy stack,
+`ROOMS_HOSTNAMES` optionally supplies the comma-separated virtual/TLS hosts,
+for example `paseo-rooms.pyratz.com,paseo-rooms.pyratzlabs.fr`. When omitted,
+it defaults to `ROOMS_DOMAIN`. Both names must resolve to this server before
+certificate issuance. This option is specific to `compose.proxy.yml`; it does
+not change the standalone Caddy deployment. Keep the legacy host while live
+invitations or old plugin installations still use it. See
+`docs/how-to/migrate-hosted-domain.md` for the ordered cutover.
+
+The independent browser client is now published through GitHub Actions; see
+`docs/how-to/publish-github-pages.md`. Its artifact contains browser files only.
