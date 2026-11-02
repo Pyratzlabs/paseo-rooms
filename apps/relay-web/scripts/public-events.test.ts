@@ -1,6 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { publicStreamEvent } from "../src/public-events.js";
+import { projectRoomQuestion } from "../src/questions.js";
+import {
+  providerQuestions,
+  optionalCommentQuestion,
+  codexPlan,
+} from "./fixtures/provider-questions.js";
+
+test("live events share every normalized provider question and redact raw metadata", () => {
+  for (const request of [
+    ...providerQuestions,
+    optionalCommentQuestion,
+    codexPlan,
+  ]) {
+    const event = publicStreamEvent({ type: "permission_requested", request });
+    assert.deepEqual(event, {
+      type: "permission_requested",
+      kind: request.kind,
+      request: projectRoomQuestion(request),
+    });
+    assert.doesNotMatch(
+      JSON.stringify(event),
+      /must stay server-side|extensionUiMethod|"input"|"metadata"/,
+    );
+  }
+});
 
 test("redacts host-only daemon permission fields from shared stream events", () => {
   const event = publicStreamEvent({

@@ -5,6 +5,15 @@ import { createClientChannel, type Transport } from "../src/paseo-e2ee.js";
 import { createRoom, deleteRoom, publicRoomUrl } from "../src/rooms.js";
 import { closeSecureRoom, openSecureRoomSocket } from "../src/secure-room.js";
 import type { RoomSocket } from "../src/relay-client.js";
+import {
+  projectRoomQuestion,
+  buildRoomQuestionUpdatedInput,
+} from "../src/questions.js";
+import {
+  providerQuestions,
+  optionalCommentQuestion,
+  codexPlan,
+} from "./fixtures/provider-questions.js";
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -230,6 +239,12 @@ test("secure room admits a valid invite and applies encrypted room actions", asy
   const received = receivedRecords();
   const fake = fakeDependencies();
   const answers: Array<{ questionId: string; payload: unknown }> = [];
+  const questions = [
+    ...providerQuestions,
+    optionalCommentQuestion,
+    codexPlan,
+  ].map((request) => projectRoomQuestion(request)!);
+  fake.deps.listRoomQuestions = async () => questions;
   const answerQuestion: AnswerQuestion = async (_room, questionId, payload) => {
     answers.push({ questionId, payload });
     return true;
@@ -267,6 +282,10 @@ test("secure room admits a valid invite and applies encrypted room actions", asy
     assert.equal(
       (welcome.payload.room as { label?: string }).label,
       "Test room",
+    );
+    assert.deepEqual(
+      (welcome.payload.room as { questions?: unknown }).questions,
+      questions,
     );
 
     const presence = await received.next();
@@ -346,6 +365,37 @@ test("secure room admits a valid invite and applies encrypted room actions", asy
         ],
       },
     });
+
+    await channel.send(
+      encoder.encode(
+        JSON.stringify({
+          v: 2,
+          sessionId: welcome.sessionId,
+          seq: 4,
+          id: "optional-comment-answer",
+          kind: "answer_prompts",
+          payload: {
+            questionId: optionalCommentQuestion.id,
+            answers: [
+              { questionIndex: 0, optionLabels: ["Alpha"] },
+              { questionIndex: 1, optionLabels: [] },
+            ],
+          },
+        }),
+      ).buffer,
+    );
+    await waitFor(() => answers.length === 3);
+    assert.equal(answers[2].questionId, optionalCommentQuestion.id);
+    assert.deepEqual(
+      buildRoomQuestionUpdatedInput(
+        optionalCommentQuestion,
+        answers[2].payload,
+      ),
+      {
+        ...optionalCommentQuestion.input,
+        answers: { Response: "Alpha", Comment: "" },
+      },
+    );
 
     fake.publish({ type: "turn_started", provider: "paseo" });
     const event = await received.next();
