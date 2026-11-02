@@ -1,7 +1,12 @@
 // Normalized permission shapes audited against @getpaseo/server 0.7.2.
 // Keep these synthetic: daemon metadata and original inputs never go to clients.
 export const providerQuestions = [
-  { provider: "opencode", name: "question", multiSelect: true, allowOther: true },
+  {
+    provider: "opencode",
+    name: "question",
+    multiSelect: true,
+    allowOther: true,
+  },
   { provider: "pi", name: "Pi select" },
   { provider: "pi", name: "Pi confirm", options: ["Yes", "No"] },
   { provider: "pi", name: "Pi input", options: [] },
@@ -11,26 +16,30 @@ export const providerQuestions = [
   { provider: "omp", name: "OMP input", options: [] },
   { provider: "omp", name: "OMP editor", options: [], multiline: true },
   { provider: "custom-provider", name: "ask_question", allowOther: true },
-].map(({ provider, name, options = ["Alpha", "Beta"], multiline, ...flags }) => ({
-  id: `${provider}-${name}`,
-  provider,
-  name,
-  kind: "question",
-  title: "Question",
-  input: {
-    questions: [{
-      question: "What should we do next?",
-      header: "Response",
-      options: options.map((label) => ({ label })),
-      ...flags,
-    }],
-    private: "must stay server-side",
-  },
-  metadata: {
-    ...(multiline ? { extensionUiMethod: "editor" } : {}),
-    private: "must stay server-side",
-  },
-}));
+].map(
+  ({ provider, name, options = ["Alpha", "Beta"], multiline, ...flags }) => ({
+    id: `${provider}-${name}`,
+    provider,
+    name,
+    kind: "question",
+    title: "Question",
+    input: {
+      questions: [
+        {
+          question: "What should we do next?",
+          header: "Response",
+          options: options.map((label) => ({ label })),
+          ...flags,
+        },
+      ],
+      private: "must stay server-side",
+    },
+    metadata: {
+      ...(multiline ? { extensionUiMethod: "editor" } : {}),
+      private: "must stay server-side",
+    },
+  }),
+);
 
 export const optionalCommentQuestion = {
   id: "pi-ask-user",

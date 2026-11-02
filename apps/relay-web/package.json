@@ -29,7 +29,7 @@
     "test:scroll": "node --import tsx --test scripts/scroll.test.ts",
     "test:room-ui": "node --test scripts/room-ui.test.mjs scripts/markdown.test.mjs",
     "test:timeline": "node --import tsx --test scripts/timeline.test.ts",
-    "test:questions": "node --import tsx --test scripts/questions.test.ts && node --test scripts/paseo-client.test.mjs",
+    "test:questions": "TSX_TSCONFIG_PATH=web/tsconfig.json node --import tsx --test scripts/questions.test.ts web/src/components/Timeline.test.tsx && node --test scripts/paseo-client.test.mjs",
     "test:public-events": "node --import tsx --test scripts/public-events.test.ts",
     "test:presence": "node --import tsx --test scripts/presence.test.ts",
     "test:ci": "node --test scripts/ci-config.test.mjs",

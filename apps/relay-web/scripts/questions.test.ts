@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { providerQuestions, optionalCommentQuestion, codexPlan } from "./fixtures/provider-questions.js";
+import {
+  providerQuestions,
+  optionalCommentQuestion,
+  codexPlan,
+} from "./fixtures/provider-questions.js";
 import {
   buildRoomQuestionUpdatedInput,
   canAnswerRoomQuestion,
@@ -273,12 +277,28 @@ for (const request of providerQuestions) {
     assert.ok(prompt, "the question must be visible");
     assert.equal(prompt.question, request.input.questions[0].question);
     const options = request.input.questions[0].options;
-    assert.deepEqual(prompt.options.map((option) => option.label), options.map((option) => option.label));
-    const labels = options.slice(0, request.input.questions[0].multiSelect ? 2 : 1).map((option) => option.label);
-    const answer = labels.length ? labels.join(", ") : "Some text\nAnother line";
-    assert.deepEqual(buildRoomQuestionUpdatedInput(request, {
-      answers: [{ questionIndex: 0, optionLabels: labels, ...(labels.length ? {} : { other: answer }) }],
-    }), { ...request.input, answers: { Response: answer } });
+    assert.deepEqual(
+      prompt.options.map((option) => option.label),
+      options.map((option) => option.label),
+    );
+    const labels = options
+      .slice(0, request.input.questions[0].multiSelect ? 2 : 1)
+      .map((option) => option.label);
+    const answer = labels.length
+      ? labels.join(", ")
+      : "Some text\nAnother line";
+    assert.deepEqual(
+      buildRoomQuestionUpdatedInput(request, {
+        answers: [
+          {
+            questionIndex: 0,
+            optionLabels: labels,
+            ...(labels.length ? {} : { other: answer }),
+          },
+        ],
+      }),
+      { ...request.input, answers: { Response: answer } },
+    );
   });
 }
 
@@ -286,54 +306,103 @@ test("supports combined Pi/OMP questions with empty optional comments", () => {
   const prompts = projectRoomQuestion(optionalCommentQuestion)?.prompts;
   assert.equal(prompts?.length, 2);
   assert.equal((prompts?.[1] as { allowEmpty?: boolean })?.allowEmpty, true);
-  assert.equal((prompts?.[1] as { placeholder?: string })?.placeholder, "Optional comment (press Enter to skip)...");
-  assert.deepEqual(buildRoomQuestionUpdatedInput(optionalCommentQuestion, {
-    answers: [
-      { questionIndex: 0, optionLabels: ["Alpha"] },
-      { questionIndex: 1, optionLabels: [] },
-    ],
-  }), { ...optionalCommentQuestion.input, answers: { Response: "Alpha", Comment: "" } });
+  assert.equal(
+    (prompts?.[1] as { placeholder?: string })?.placeholder,
+    "Optional comment (press Enter to skip)...",
+  );
+  assert.deepEqual(
+    buildRoomQuestionUpdatedInput(optionalCommentQuestion, {
+      answers: [
+        { questionIndex: 0, optionLabels: ["Alpha"] },
+        { questionIndex: 1, optionLabels: [] },
+      ],
+    }),
+    {
+      ...optionalCommentQuestion.input,
+      answers: { Response: "Alpha", Comment: "" },
+    },
+  );
 });
 
 test("honors allowOther rather than enabling free text for every provider", () => {
-  const request = providerQuestions.find((request) => request.name === "Pi select")!;
+  const request = providerQuestions.find(
+    (request) => request.name === "Pi select",
+  )!;
   assert.equal(projectRoomQuestion(request)?.prompts[0].allowOther, false);
-  assert.equal(buildRoomQuestionUpdatedInput(request, {
-    answers: [{ questionIndex: 0, optionLabels: [], other: "Unlisted" }],
-  }), null);
+  assert.equal(
+    buildRoomQuestionUpdatedInput(request, {
+      answers: [{ questionIndex: 0, optionLabels: [], other: "Unlisted" }],
+    }),
+    null,
+  );
 });
 
 test("supports Codex plan approval with its actual dismiss action", () => {
   const projected = projectRoomQuestion(codexPlan);
   assert.equal(projected?.plan, codexPlan.input.plan);
-  assert.deepEqual(projected?.actions, codexPlan.actions.map(({ id, label }) => ({ id, label })));
+  assert.deepEqual(
+    projected?.actions,
+    codexPlan.actions.map(({ id, label }) => ({ id, label })),
+  );
   assert.equal(roomQuestionActionBehavior(codexPlan, "dismiss"), "deny");
   assert.equal(roomQuestionActionBehavior(codexPlan, "implement"), "allow");
-  assert.equal(projectRoomQuestion({ ...codexPlan, actions: [{ id: "dismiss", label: "Dismiss", behavior: "allow" }, codexPlan.actions[1]] }), null);
+  assert.equal(
+    projectRoomQuestion({
+      ...codexPlan,
+      actions: [
+        { id: "dismiss", label: "Dismiss", behavior: "allow" },
+        codexPlan.actions[1],
+      ],
+    }),
+    null,
+  );
 });
 
 test("does not silently submit a partial malformed question set", () => {
   const request = {
     ...optionalCommentQuestion,
-    input: { questions: [optionalCommentQuestion.input.questions[0], { question: "Missing header" }] },
+    input: {
+      questions: [
+        optionalCommentQuestion.input.questions[0],
+        { question: "Missing header" },
+      ],
+    },
   };
-  assert.equal(buildRoomQuestionUpdatedInput(request, {
-    answers: [{ questionIndex: 0, optionLabels: ["Alpha"] }],
-  }), null);
+  assert.equal(
+    buildRoomQuestionUpdatedInput(request, {
+      answers: [{ questionIndex: 0, optionLabels: ["Alpha"] }],
+    }),
+    null,
+  );
 });
 
 test("rejects duplicate answer keys and prototype-shaped answer keys", () => {
   for (const header of ["Response", "__proto__"]) {
     const request = {
       ...optionalCommentQuestion,
-      input: { questions: optionalCommentQuestion.input.questions.map((prompt) => ({ ...prompt, header })) },
+      input: {
+        questions: optionalCommentQuestion.input.questions.map((prompt) => ({
+          ...prompt,
+          header,
+        })),
+      },
     };
-    assert.equal(buildRoomQuestionUpdatedInput(request, {
-      answers: [{ questionIndex: 0, optionLabels: ["Alpha"] }, { questionIndex: 1, optionLabels: [], other: "Comment" }],
-    }), null);
+    assert.equal(
+      buildRoomQuestionUpdatedInput(request, {
+        answers: [
+          { questionIndex: 0, optionLabels: ["Alpha"] },
+          { questionIndex: 1, optionLabels: [], other: "Comment" },
+        ],
+      }),
+      null,
+    );
   }
 });
 
 test("unsupported questions get an explicit host fallback instead of a blank card", () => {
-  assert.match(projectRoomQuestion({ id: "unknown", kind: "question", name: "new-format" })?.description ?? "", /answer.*Paseo/i);
+  assert.match(
+    projectRoomQuestion({ id: "unknown", kind: "question", name: "new-format" })
+      ?.description ?? "",
+    /answer.*Paseo/i,
+  );
 });

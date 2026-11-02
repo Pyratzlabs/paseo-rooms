@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 import { Markdown } from "./Markdown";
 import type { RoomQuestion, RoomQuestionAnswer } from "../api";
 import type { DisplayItem } from "../timeline";
@@ -168,8 +168,10 @@ function PromptQuestions({
   const [activePrompt, setActivePrompt] = useState(0);
   const prompt = question.prompts[activePrompt];
   const answered = question.prompts.map(
-    (_, index) =>
-      (selected[index]?.length ?? 0) > 0 || Boolean(other[index]?.trim()),
+    (item, index) =>
+      (selected[index]?.length ?? 0) > 0 ||
+      Boolean(other[index]?.trim()) ||
+      item.allowEmpty === true,
   );
   const complete = answered.every(Boolean);
 
@@ -192,6 +194,16 @@ function PromptQuestions({
   }
 
   const activeComplete = answered[activePrompt] ?? false;
+  const textInputProps = {
+    "aria-label": `${prompt.header} other answer`,
+    className: "other-answer",
+    onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+      writeOther(activePrompt, event.target.value, prompt.multiSelect),
+    placeholder:
+      prompt.placeholder ??
+      (prompt.options.length ? "Other..." : "Your answer..."),
+    value: other[activePrompt] ?? "",
+  };
 
   return (
     <div className="prompt-questions">
@@ -232,17 +244,16 @@ function PromptQuestions({
             </label>
           );
         })}
-        {prompt.allowOther && (
-          <input
-            aria-label={`${prompt.header} other answer`}
-            className="other-answer"
-            onChange={(event) =>
-              writeOther(activePrompt, event.target.value, prompt.multiSelect)
-            }
-            placeholder="Other..."
-            value={other[activePrompt] ?? ""}
-          />
-        )}
+        {prompt.allowOther &&
+          (prompt.multiline && !prompt.isSecret ? (
+            <textarea {...textInputProps} rows={5} />
+          ) : (
+            <input
+              {...textInputProps}
+              type={prompt.isSecret ? "password" : "text"}
+              autoComplete={prompt.isSecret ? "off" : undefined}
+            />
+          ))}
       </fieldset>
       {activePrompt < question.prompts.length - 1 ? (
         <button
@@ -270,7 +281,13 @@ function PromptQuestions({
           }
           type="button"
         >
-          {disabled ? "Sending..." : "Submit answers"}
+          {disabled
+            ? "Sending..."
+            : question.prompts.length === 1 &&
+                prompt.allowEmpty &&
+                !other[0]?.trim()
+              ? (prompt.dismissLabel ?? "Submit answers")
+              : "Submit answers"}
         </button>
       )}
     </div>
