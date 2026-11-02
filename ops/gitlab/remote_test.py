@@ -22,6 +22,9 @@ class DeploymentTests(unittest.TestCase):
         (self.directory / '.env').write_text('RELAY_AUTH_MODE=open\nKEEP_PRIVATE=original-secret\n')
         (self.directory / 'compose.proxy.yml').write_text('original-compose')
         self.image = OLD
+        self.container_id = 'custom-project-relay-1'
+        self.labels = {}
+        self.stop_no_effect = False
         self.fail_build = False
         self.abort_build = False
         self.abort_identity = False
@@ -55,8 +58,18 @@ class DeploymentTests(unittest.TestCase):
             return '172.18.0.3\n' if args[-1] == 'nginx-proxy' else (self.image or '') + '\n'
         if args[:3] == ['docker', 'image', 'inspect']:
             return NEW + '\n'
+        if args[:2] == ['docker', 'ps']:
+            filters = [args[i + 1] for i, arg in enumerate(args) if arg == '--filter']
+            for value in filters:
+                if value.startswith('name=') and value != 'name=^/' + self.container_id + '$':
+                    return ''
+                if value.startswith('label='):
+                    key, expected = value[len('label='):].split('=', 1)
+                    if self.labels.get(key) != expected:
+                        return ''
+            return self.container_id + '\n' if self.image else ''
         if 'ps' in args:
-            return 'container-id\n' if self.image else ''
+            return self.container_id + '\n' if self.image else ''
         if '--images' in args:
             if self.abort_identity:
                 (self.directory / '.deploy-history/500/abort').write_text('cancelled')
@@ -69,9 +82,13 @@ class DeploymentTests(unittest.TestCase):
                 raise RuntimeError('simulated build failure')
         if 'up' in args:
             override = self.directory / ('.rollback-image.yml' if any('rollback-image' in x for x in args) else '.active-release.yml')
-            self.image = json.loads(override.read_text())['services']['relay']['image']
+            service = json.loads(override.read_text())['services']['relay']
+            self.image = service['image']
+            self.labels = {'com.docker.compose.service': 'relay', **service.get('labels', {})}
         if args[:2] == ['docker', 'stop']:
-            self.image = None
+            self.assertEqual(args[2:], [self.container_id])
+            if not self.stop_no_effect:
+                self.image = None
         return ''
 
     def action(self, action, owner='500'):
@@ -167,6 +184,38 @@ class DeploymentTests(unittest.TestCase):
         self.assertIsNone(self.image)
         self.assertFalse((self.directory / '.env').exists())
         self.assertEqual(self.state()['phase'], 'rolled_back')
+        self.assertIn(['docker', 'stop', self.container_id], self.calls)
+
+    def test_first_deployment_rollback_does_not_stop_unrelated_service(self):
+        self.image = None
+        self.action('prepare')
+        self.action('activate')
+        self.labels['io.pyratz.rooms.deployment'] = '999'
+        self.action('rollback')
+        self.assertEqual(self.image, NEW)
+        self.assertFalse(any(call[:2] == ['docker', 'stop'] for call in self.calls))
+
+    def test_first_deployment_rollback_verifies_the_service_stopped(self):
+        self.image = None
+        self.action('prepare')
+        self.action('activate')
+        self.stop_no_effect = True
+        with self.assertRaisesRegex(RuntimeError, 'still running'):
+            self.action('rollback')
+        self.assertEqual(self.state()['phase'], 'activated')
+        self.stop_no_effect = False
+        self.action('rollback')
+        self.assertEqual(self.state()['phase'], 'rolled_back')
+
+    def test_first_deployment_rollback_rejects_an_unexpected_owned_image(self):
+        self.image = None
+        self.action('prepare')
+        self.action('activate')
+        self.image = OLD
+        with self.assertRaisesRegex(RuntimeError, 'identity'):
+            self.action('rollback')
+        self.assertEqual(self.state()['phase'], 'activated')
+        self.assertFalse(any(call[:2] == ['docker', 'stop'] for call in self.calls))
 
     def test_running_image_must_match_the_expected_release_before_commit(self):
         self.action('prepare')
@@ -194,6 +243,28 @@ class DeploymentTests(unittest.TestCase):
         self.action('rollback')
         self.assertEqual(self.image, OLD)
         self.assertFalse(any('up' in call for call in self.calls))
+
+    def test_main_advancing_during_public_health_cannot_commit(self):
+        self.action('prepare')
+        self.action('activate')
+        self.stale = True
+        with self.assertRaisesRegex(RuntimeError, 'superseded'):
+            self.action('commit')
+        self.assertEqual(self.state()['phase'], 'activated')
+        self.action('abort')
+        self.action('rollback')
+        self.assertEqual(self.image, OLD)
+        self.assertEqual(self.state()['phase'], 'rolled_back')
+
+    def test_cancelled_final_freshness_check_cannot_commit(self):
+        self.action('prepare')
+        self.action('activate')
+        def cancel_during_check(sha):
+            self.action('abort')
+        remote.verify_current_main = cancel_during_check
+        with self.assertRaisesRegex(RuntimeError, 'cancelled'):
+            self.action('commit')
+        self.assertEqual(self.state()['phase'], 'activated')
 
     def test_env_updates_and_checkpoint_paths_reject_injection(self):
         self.action('prepare')

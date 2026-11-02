@@ -54,7 +54,7 @@ def verify_current_main(sha):
     request = urllib.request.Request(url, headers={'Accept': 'application/vnd.github+json', 'User-Agent': 'paseo-rooms-deployment'})
     with urllib.request.build_opener(NoRedirect()).open(request, timeout=10) as response:
         if response.geturl() != url or json.load(response).get('object', {}).get('sha') != sha:
-            raise RuntimeError('Release was superseded before activation')
+            raise RuntimeError('Release was superseded before completion')
 
 
 def execute(request):
@@ -177,6 +177,10 @@ def execute(request):
             check_abort()
             if state['phase'] != 'activated' or current_image(active) != state['expectedImage']:
                 raise RuntimeError('Active release identity changed')
+            # Public verification can take minutes after the activation check.
+            # A newly observed main revision must cause the coordinator to recover.
+            verify_current_main(state['sha'])
+            check_abort()
             state['phase'] = 'committed'
             store(state)
             return
@@ -195,11 +199,21 @@ def execute(request):
                 run(restored + ['-f', str(rollback), 'up', '-d', '--no-build', '--no-deps', 'relay'], directory)
                 if current_image(restored) != state['previousImage']:
                     raise RuntimeError('Rollback image verification failed')
-            elif not state['previousImage']:
-                # First deployment has no previous image. Stop only this service.
-                container = run(['docker', 'ps', '-aq', '--filter', 'name=^/deploy-relay-1$'], directory, capture=True).strip()
-                if container:
-                    run(['docker', 'stop', container], directory)
+            elif not state['previousImage'] and state['phase'] == 'activated':
+                # Compose project/container names can be overridden. Query this
+                # transaction's service labels even after restoring old files.
+                filters = ['--filter', 'label=com.docker.compose.service=relay',
+                           '--filter', 'label=io.pyratz.rooms.deployment=' + str(owner),
+                           '--filter', 'label=io.pyratz.rooms.revision=' + state['sha']]
+                containers = run(['docker', 'ps', '-aq'] + filters, directory, capture=True).split()
+                for container in containers:
+                    image = run(['docker', 'inspect', '--format', '{{.Image}}', container], directory, capture=True).strip()
+                    if image != state['expectedImage']:
+                        raise RuntimeError('Rollback container image identity changed')
+                if containers:
+                    run(['docker', 'stop'] + containers, directory)
+                if run(['docker', 'ps', '-q'] + filters, directory, capture=True).strip():
+                    raise RuntimeError('Failed relay is still running after rollback')
             state['phase'] = 'rolled_back'
             store(state)
             return

@@ -79,8 +79,16 @@ certificate issuance must work for the advertised hostnames.
 GitHub requests a deployment only after successful push-to-main CI from the
 same official repository. GitLab independently verifies the exact run's repo,
 workflow path, source event, SHA, conclusion and latest-main ref. It verifies
-again after obtaining the deployment resource lock. Public PR SHAs, stale main
-runs and arbitrary refs cannot be deployed through the callback.
+again after obtaining the deployment resource lock, before activation after the
+VM build, and before committing after public health checks. A superseded release
+observed before activation is rejected; one observed before commit is rolled
+back. Public PR SHAs and arbitrary refs are rejected by the release gate.
+
+Freshness checks are point-in-time observations. The VM deployment lock does not
+lock GitHub's `main` branch, so a push can occur immediately after the final
+check. This workflow does not promise that the running release always matches
+the current branch head; a subsequent successful main CI run requests the next
+deployment. New source commits that fail CI do not replace a healthy release.
 
 GitHub waits for both the GitLab pipeline and its actual `deploy-relay` job to
 succeed. Failed, cancelled, skipped, blocked and timed-out jobs are not success.
@@ -114,7 +122,10 @@ or invitation. A different/old relay answering the same discovery mode cannot
 satisfy this release check.
 
 Failure before commit restores the matching previous env, compose and image.
-A first deployment has no previous image, so rollback stops only its new relay.
+A first deployment has no previous image, so rollback finds its relay by Compose
+service, deployment ID and revision labels, independent of the Compose project
+name. It verifies the image and that the service stopped before recording
+successful rollback.
 Late recovery never undoes a committed or differently owned deployment. GitLab's
 `after_script` retries recovery on cancellation/failure, with script/cleanup time
 reserved inside the job timeout. Persistent VM/network failure can prevent
