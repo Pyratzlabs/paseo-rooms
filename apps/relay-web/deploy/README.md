@@ -94,7 +94,7 @@ keeps this running in the background.
   network).
 - `DEPLOY_SSH_TARGET` — e.g. `deployer@192.168.193.100`.
 - `RELAY_AUTH_MODE` — optional override (`open` or `key`). The hosted
-  `paseo-rooms.pyratzlabs.fr` relay defaults to `open`; other domains and LAN
+  `paseo-rooms.pyratz.com` and legacy `paseo-rooms.pyratzlabs.fr` relays default to `open`; other domains and LAN
   deployments default to `key`.
 - `RELAY_KEY` — the shared relay secret, masked; required only in `key` mode.
 - `DEPLOY_REMOTE_DIR` — optional; defaults to `/home/deployer/paseo-rooms`.
@@ -211,3 +211,14 @@ queue limit, and a five-minute guest idle timeout. `createRelay({ limits: ... })
 allows validated overrides for embedding/testing; the executable exposes the
 two host budgets above. Hosting capacity and proxy-level denial-of-service controls
 must be assessed separately before general availability.
+
+## Hostname migration
+
+`ROOMS_DOMAIN` is the canonical hostname. For the existing nginx-proxy stack,
+`ROOMS_HOSTNAMES` optionally supplies the comma-separated virtual/TLS hosts,
+for example `paseo-rooms.pyratz.com,paseo-rooms.pyratzlabs.fr`. When omitted,
+it defaults to `ROOMS_DOMAIN`. Both names must resolve to this server before
+certificate issuance. This option is specific to `compose.proxy.yml`; it does
+not change the standalone Caddy deployment. Keep the legacy host while live
+invitations or old plugin installations still use it. See
+`docs/how-to/migrate-hosted-domain.md` for the ordered cutover.

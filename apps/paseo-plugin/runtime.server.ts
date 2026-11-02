@@ -18,7 +18,7 @@ export interface ManagedRoomServer {
   started: boolean;
 }
 
-const DEFAULT_RELAY_PUBLIC_URL = "https://paseo-rooms.pyratzlabs.fr";
+const DEFAULT_RELAY_PUBLIC_URL = "https://paseo-rooms.pyratz.com";
 const DEFAULT_CLIENT_URL = "https://paseo-rooms-9eb268.gitlab.io";
 
 let managed: Promise<StartedRoomServer> | null = null;

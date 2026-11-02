@@ -1,13 +1,13 @@
 import { normalizeRelayOrigin as normalizeRoomRelayOrigin } from "../relay-web/src/relay-target";
 
 export const DEFAULT_CLIENT_ORIGIN = "https://paseo-rooms-9eb268.gitlab.io";
-export const DEFAULT_RELAY_ORIGIN = "wss://paseo-rooms.pyratzlabs.fr";
+export const DEFAULT_RELAY_ORIGIN = "wss://paseo-rooms.pyratz.com";
 
 export const CLIENT_ORIGIN_PRESETS = [
   {
     id: "pyratz" as const,
     label: "Pyratz Labs",
-    origin: "https://paseo-rooms.pyratzlabs.fr",
+    origin: "https://paseo-rooms.pyratz.com",
   },
   {
     id: "gitlab" as const,

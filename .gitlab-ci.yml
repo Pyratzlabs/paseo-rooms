@@ -11,7 +11,7 @@
 #   RELAY_AUTH_MODE         open or key; Pyratz hosted relay defaults to open,
 #                           other deployments default to key
 #   DEPLOY_REMOTE_DIR       defaults to /home/deployer/paseo-rooms
-#   ROOMS_DOMAIN            public domain (e.g. paseo-rooms.pyratzlabs.fr);
+#   ROOMS_DOMAIN            primary public domain (e.g. paseo-rooms.pyratz.com);
 #                           when set, the relay joins the host's nginx-proxy
 #                           "web" network via compose.proxy.yml for auto-TLS,
 #                           otherwise compose.lan.yml (plain :8080) is used
@@ -121,7 +121,7 @@ deploy:
       sh apps/relay-web/deploy/validate-capacity.sh
       DEPLOY_DIR="${DEPLOY_REMOTE_DIR:-/home/deployer/paseo-rooms}"
       if [ -z "${RELAY_AUTH_MODE:-}" ]; then
-        if [ "${ROOMS_DOMAIN:-}" = "paseo-rooms.pyratzlabs.fr" ]; then
+        if [ "${ROOMS_DOMAIN:-}" = "paseo-rooms.pyratz.com" ] || [ "${ROOMS_DOMAIN:-}" = "paseo-rooms.pyratzlabs.fr" ]; then
           RELAY_AUTH_MODE=open
         else
           RELAY_AUTH_MODE=key
@@ -141,13 +141,13 @@ deploy:
       else
         COMPOSE_FILE="compose.lan.yml"
       fi
-      RELAY_ENV_B64="$(printf 'RELAY_AUTH_MODE=%s\nRELAY_KEY=%s\nROOMS_DOMAIN=%s\nRELAY_TRUSTED_PROXY_ADDRESSES=%s\nRELAY_MAX_HOSTS=%s\nRELAY_MAX_HOSTS_PER_SOURCE=%s\n' "$RELAY_AUTH_MODE" "${RELAY_KEY:-}" "${ROOMS_DOMAIN:-}" "${RELAY_TRUSTED_PROXY_ADDRESSES:-}" "${RELAY_MAX_HOSTS:-256}" "${RELAY_MAX_HOSTS_PER_SOURCE:-32}" | base64 | tr -d '\n')"
+      RELAY_ENV_B64="$(printf 'RELAY_AUTH_MODE=%s\nRELAY_KEY=%s\nROOMS_DOMAIN=%s\nROOMS_HOSTNAMES=%s\nRELAY_TRUSTED_PROXY_ADDRESSES=%s\nRELAY_MAX_HOSTS=%s\nRELAY_MAX_HOSTS_PER_SOURCE=%s\n' "$RELAY_AUTH_MODE" "${RELAY_KEY:-}" "${ROOMS_DOMAIN:-}" "${ROOMS_HOSTNAMES:-${ROOMS_DOMAIN:-}}" "${RELAY_TRUSTED_PROXY_ADDRESSES:-}" "${RELAY_MAX_HOSTS:-256}" "${RELAY_MAX_HOSTS_PER_SOURCE:-32}" | base64 | tr -d '\n')"
       ssh "$DEPLOY_SSH_TARGET" "mkdir -p '$DEPLOY_DIR/apps/relay-web/deploy' '$DEPLOY_DIR/apps/relay-web/src/relay' '$DEPLOY_DIR/apps/relay-web/public'"
       rsync -az --delete --exclude .env apps/relay-web/deploy/ apps/relay-web/src/relay/ apps/relay-web/public/ --relative \
         "$DEPLOY_SSH_TARGET":"$DEPLOY_DIR/"
       ssh "$DEPLOY_SSH_TARGET" "printf '%s' '$RELAY_ENV_B64' | base64 -d > '$DEPLOY_DIR/apps/relay-web/deploy/.env' && chmod 600 '$DEPLOY_DIR/apps/relay-web/deploy/.env' && cd '$DEPLOY_DIR/apps/relay-web/deploy' && docker compose --env-file .env -f $COMPOSE_FILE up -d --build --remove-orphans && for attempt in \$(seq 1 15); do if discovery=\$(curl -fsS http://127.0.0.1:8080/.well-known/paseo-rooms --connect-timeout 5 --max-time 10) && printf '%s' \"\$discovery\" | docker compose --env-file .env -f $COMPOSE_FILE exec -T relay node -e 'try { const policy = JSON.parse(require(\"node:fs\").readFileSync(0, \"utf8\")); process.exit(policy.registration === process.argv[1] ? 0 : 1); } catch { process.exit(1); }' '$RELAY_AUTH_MODE'; then exit 0; fi; sleep 1; done; exit 1"
   rules:
-    - if: $CI_COMMIT_BRANCH == "main" && $DEPLOY_SSH_TARGET && $DEPLOY_SSH_PRIVATE_KEY && $DEPLOY_SSH_KNOWN_HOSTS && ($RELAY_AUTH_MODE == "open" || (($RELAY_AUTH_MODE == null || $RELAY_AUTH_MODE == "") && $ROOMS_DOMAIN == "paseo-rooms.pyratzlabs.fr") || (($RELAY_AUTH_MODE == "key" || $RELAY_AUTH_MODE == null || $RELAY_AUTH_MODE == "") && $RELAY_KEY))
+    - if: $CI_COMMIT_BRANCH == "main" && $DEPLOY_SSH_TARGET && $DEPLOY_SSH_PRIVATE_KEY && $DEPLOY_SSH_KNOWN_HOSTS && ($RELAY_AUTH_MODE == "open" || (($RELAY_AUTH_MODE == null || $RELAY_AUTH_MODE == "") && ($ROOMS_DOMAIN == "paseo-rooms.pyratz.com" || $ROOMS_DOMAIN == "paseo-rooms.pyratzlabs.fr")) || (($RELAY_AUTH_MODE == "key" || $RELAY_AUTH_MODE == null || $RELAY_AUTH_MODE == "") && $RELAY_KEY))
 
 # A statically hosted v2 room client. The relay remains the WebSocket endpoint;
 # the explicit Vite value lets Pages use a different origin without weakening
@@ -167,7 +167,7 @@ pages:
       artifacts: false
   script:
     - npm ci --no-audit --no-fund
-    - VITE_PASEO_ROOMS_RELAY_ORIGIN=https://paseo-rooms.pyratzlabs.fr npm run build:web
+    - VITE_PASEO_ROOMS_RELAY_ORIGIN=https://paseo-rooms.pyratz.com npm run build:web
     - mkdir -p pages-public
     - cp apps/relay-web/public/room.html pages-public/index.html
     - cp apps/relay-web/public/room.html pages-public/404.html

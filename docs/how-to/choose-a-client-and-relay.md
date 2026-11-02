@@ -4,6 +4,8 @@ sidebar_position: 3
 
 # Choose a room client and relay
 
+The hosted product and relay use `paseo-rooms.pyratz.com`. The default browser client remains separately published on GitLab Pages.
+
 Each new room has two independent destinations:
 
 - the **room client** is the browser application that renders the shared

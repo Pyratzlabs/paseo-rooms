@@ -28,12 +28,17 @@ replay, and deny service.
 
 ### Current client-delivery limitation
 
-Initially the relay also serves the room HTML and JavaScript. A malicious
-relay deployment could therefore replace the client and steal the fragment
-secrets before the protocol can protect them. Until the complete client is
-served from a separately administered immutable static origin or installed
-client, describe v2 as **encrypted room payload transport**, not as a full
-malicious-relay guarantee.
+The default browser client is published independently on GitLab Pages. A
+same-origin relay client and custom client origins are also supported. Client
+code is part of the trusted endpoint: a malicious delivery origin can replace
+JavaScript and capture plaintext or the invitation before encryption.
+
+Separate static delivery prevents the relay operator alone from replacing the
+first page load when that operator does not also control the client origin.
+It is not a verifiable, immutable or version-pinned delivery guarantee. Teams
+can self-host both the frontend and relay to control both operators; they must
+still trust their own delivery infrastructure. See [Security and privacy](explanation/security-and-privacy)
+and [Run your own relay](how-to/run-your-own-relay) for the supported choices.
 
 ## 2. Roles and trust
 

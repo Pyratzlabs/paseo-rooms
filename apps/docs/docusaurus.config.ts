@@ -5,7 +5,7 @@ const config: Config = {
   title: "Paseo Rooms",
   tagline: "Collaborative agent work",
   favicon: "img/favicon.svg",
-  url: "https://paseo-rooms.pyratzlabs.fr",
+  url: "https://paseo-rooms.pyratz.com",
   baseUrl: "/docs/",
   organizationName: "pyratzlabs",
   projectName: "paseo-rooms",
@@ -34,7 +34,7 @@ const config: Config = {
       items: [
         { to: "/", label: "Documentation", position: "left" },
         {
-          href: "https://paseo-rooms.pyratzlabs.fr/",
+          href: "https://paseo-rooms.pyratz.com/",
           label: "Product",
           position: "right",
         },

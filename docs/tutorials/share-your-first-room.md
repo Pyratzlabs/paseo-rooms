@@ -9,7 +9,7 @@ This tutorial takes you from a running Paseo conversation to a browser-based sha
 ## Before you begin
 
 - Paseo desktop is running with the Paseo Rooms plugin installed.
-- The plugin is configured to find this checkout and can start its local room server.
+- The plugin is installed on the daemon host; it carries its matching room runtime.
 - You have an active Paseo agent session to share.
 
 ## Create the link

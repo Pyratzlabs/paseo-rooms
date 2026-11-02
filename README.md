@@ -1,12 +1,19 @@
 # paseo-rooms
 
-Proof of concept: **share one Paseo coding-agent session with a collaborator via
-a capability URL**, without giving them access to your Paseo daemon.
+Share an existing Paseo coding-agent session with teammates or clients through
+one invitation link. Browser participants can follow the live conversation,
+send messages and images, and answer supported questions while the host keeps
+the Paseo connection and workspace on their machine.
 
-Two humans open the same `http://localhost:3000/r/<token>` link in separate
-browsers, both see the agent's full conversation, both can send messages to the
-same running agent, and replies stream live to everyone. The link grants access
-to exactly one agent — nothing else on the daemon.
+- [Product](https://paseo-rooms.pyratz.com/)
+- [Documentation](https://paseo-rooms.pyratz.com/docs/)
+- [Self-host the relay and frontend](docs/how-to/run-your-own-relay.md)
+- [Article draft and shared figures](articles/README.md)
+
+New rooms use encrypted browser-to-host channels through the relay. The client
+JavaScript must come from a trusted origin, and an invite grants meaningful
+conversation authority: participants can influence the agent's host-side tool
+use. Read [Security and privacy](docs/explanation/security-and-privacy.md).
 
 This monorepo keeps the deployed relay/web application and the companion Paseo
 desktop plugin versioned and verified together:
@@ -78,10 +85,11 @@ The agent is archived afterwards. `npm run typecheck` type-checks the code.
 
 ## State
 
-- `data/rooms.json` — `share_token -> agent` mappings (the only state this
-  service owns; the conversation lives in Paseo).
-- `data/admin-token` — bearer token required to create rooms; the `share`
-  script reads it locally. Collaborators never need it.
+- Encrypted v2 rooms and their images are held in host-process memory. Process
+  restarts invalidate those links; the timeline itself remains in Paseo.
+- `data/admin-token` is the local credential used to create rooms. It is never
+  part of a participant's invitation.
+- `data/rooms.json` belongs to the legacy HTTP-room workflow, not v2 room storage.
 
 ## Plugin
 

@@ -41,7 +41,7 @@ For a private relay, enter its operator's key in that widget or set
 this laptop to register rooms; it is never bundled with the plugin or stored
 in Git. The local room listener can start without a default key. New default links use
 `https://paseo-rooms-9eb268.gitlab.io`, the independently deployed browser
-client, and connect to the relay at `https://paseo-rooms.pyratzlabs.fr`.
+client, and connect to the relay at `https://paseo-rooms.pyratz.com`.
 For a private relay, set `PASEO_ROOMS_PUBLIC_URL` and
 `PASEO_ROOMS_RELAY_URL`; its own client remains the default. Set
 `PASEO_ROOMS_CLIENT_URL` to use any separately hosted client instead. These are

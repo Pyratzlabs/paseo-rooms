@@ -150,7 +150,7 @@ test("GitLab Pages publishes a relay-configured room SPA after verification", ()
   assert.match(config, /^pages:[\s\S]*?^  stage: deploy$/m);
   assert.match(
     config,
-    /VITE_PASEO_ROOMS_RELAY_ORIGIN=https:\/\/paseo-rooms\.pyratzlabs\.fr npm run build:web/,
+    /VITE_PASEO_ROOMS_RELAY_ORIGIN=https:\/\/paseo-rooms\.pyratz\.com npm run build:web/,
   );
   assert.match(
     config,
@@ -268,13 +268,19 @@ test("CI schedules only deployments with complete registration and SSH settings"
       true,
     );
   }
-  for (const mode of [null, "", "open"]) {
+  for (const domain of [
+    "paseo-rooms.pyratz.com",
+    "paseo-rooms.pyratzlabs.fr",
+  ]) {
+    for (const mode of [null, "", "open"]) {
+      assert.equal(
+        scheduled({ ROOMS_DOMAIN: domain, RELAY_AUTH_MODE: mode }),
+        true,
+      );
+    }
     assert.equal(
-      scheduled({
-        ROOMS_DOMAIN: "paseo-rooms.pyratzlabs.fr",
-        RELAY_AUTH_MODE: mode,
-      }),
-      true,
+      scheduled({ ROOMS_DOMAIN: domain, RELAY_AUTH_MODE: "key" }),
+      false,
     );
   }
   assert.equal(scheduled({ RELAY_AUTH_MODE: "open" }), true);
@@ -437,6 +443,13 @@ ${block.replace(/^      /gm, "")}`;
   const mutationOutput = join(directory, "mutations");
   const cases = [
     {
+      domain: "paseo-rooms.pyratz.com",
+      hostnames: "paseo-rooms.pyratz.com,paseo-rooms.pyratzlabs.fr",
+      mode: "",
+      key: "",
+      expected: "open",
+    },
+    {
       domain: "paseo-rooms.pyratzlabs.fr",
       mode: "",
       key: "",
@@ -516,6 +529,7 @@ ${block.replace(/^      /gm, "")}`;
       trusted = "",
       maxHosts = "512",
       maxPerSource = "48",
+      hostnames = "",
     } of cases) {
       rmSync(output, { force: true });
       rmSync(mutationOutput, { force: true });
@@ -529,6 +543,7 @@ ${block.replace(/^      /gm, "")}`;
           DEPLOY_SSH_TARGET: "fixture-host",
           DEPLOY_REMOTE_DIR: "/fixture",
           ROOMS_DOMAIN: domain,
+          ROOMS_HOSTNAMES: hostnames,
           RELAY_AUTH_MODE: mode,
           RELAY_KEY: key,
           RELAY_TRUSTED_PROXY_ADDRESSES: trusted,
@@ -553,6 +568,11 @@ ${block.replace(/^      /gm, "")}`;
           new RegExp(`^RELAY_AUTH_MODE=${expected}$`, "m"),
         );
         assert.match(environment, new RegExp(`^RELAY_KEY=${key}$`, "m"));
+        assert.ok(
+          environment
+            .split("\n")
+            .includes(`ROOMS_HOSTNAMES=${hostnames || domain}`),
+        );
         assert.match(environment, /^RELAY_MAX_HOSTS=512$/m);
         assert.match(environment, /^RELAY_MAX_HOSTS_PER_SOURCE=48$/m);
         assert.ok(

@@ -6,7 +6,9 @@ sidebar_position: 3
 
 Run a relay you control when you want to choose the operator and hosting location for the public routing service. This is useful for team infrastructure and reduces reliance on the shared Pyratz Labs deployment.
 
-Self-hosting does **not** by itself make the current web client independently trustworthy: today the relay also serves the room page and JavaScript. The encrypted transport keeps room payloads opaque to the relay after the client loads, but trusted static-client delivery is a planned milestone.
+You can host **both the relay and the browser frontend**. The default deployment below serves the bundled frontend from the relay's domain. Alternatively, serve the frontend from a static host you control and select it independently in the plugin.
+
+Encrypted room channels protect payloads between the browser and host runtime. The JavaScript delivered to the browser must still be trusted: an operator who changes that code could read content before encryption. Hosting both services puts code delivery and routing under your organisation's control; it does not remove trust in your administrators, host machines, or room participants. See [Security and privacy](../explanation/security-and-privacy).
 
 ## Prerequisites
 
@@ -39,19 +41,36 @@ Open registration does not grant access to other people's rooms: guests still ne
 
 The script builds the public web assets, transfers the relay and assets, starts the container stack, and waits for the public URL to answer. See `apps/relay-web/deploy/README.md` for environment variables and proxy alternatives.
 
-## Connect a host laptop
+## Connect through the Paseo plugin
 
-Start the local room server in dial-out mode. For a private relay:
+1. Open **Share session**, then **Advanced settings**.
+2. Set **Relay for new links** to `wss://rooms.example.com` (without `/host`).
+3. Set **Open room with** to **Custom client** and enter `https://rooms.example.com` for the bundled frontend.
+4. Keep **Automatic discovery** selected. A private relay asks for its registration key; an open relay does not.
+5. Create a **new** link. Check its client hostname and confirm the selected relay when the browser asks.
+
+The host opens the outbound connection and registers its room routes. It reconnects and re-registers after a relay restart. Neither the frontend nor the relay receives the Paseo daemon credential or the host's `route → agent` mapping. A private relay's registration key controls who can register hosts; it is separate from a room's invitation secret and encryption keys.
+
+The standalone room server can also connect with `RELAY_URL=wss://rooms.example.com/host` and, for private relays, `RELAY_KEY`. The plugin manages that runtime automatically, so plugin users do not need to start a second server.
+
+## Host the frontend separately
+
+Use a static origin you control, for example `https://rooms-ui.example.com`:
 
 ```bash
-RELAY_URL=wss://rooms.example.com/host \
-RELAY_KEY='the-same-secret' \
-npm run start --workspace @paseo-rooms/relay-web
+npm ci --ignore-scripts --no-audit --no-fund
+VITE_PASEO_ROOMS_RELAY_ORIGIN=https://rooms.example.com npm run build:web
+mkdir -p /tmp/rooms-static
+cp apps/relay-web/public/room.html /tmp/rooms-static/index.html
+cp apps/relay-web/public/room.html /tmp/rooms-static/404.html
+cp -R apps/relay-web/public/assets /tmp/rooms-static/assets
 ```
 
-For an open relay, omit `RELAY_KEY`. In the Paseo plugin, select your relay origin and **Automatic discovery**; only private relays ask for their operator's key.
+Publish `/tmp/rooms-static/` through your chosen HTTPS static host. Configure an SPA fallback that serves `index.html` for `/r/*`; `404.html` is the fallback used by GitLab Pages. Other hosts may require a rewrite rule rather than that filename. Keep `/assets/*` available at the origin root.
 
-The laptop creates the outbound host connection and registers live room routes. It reconnects and re-registers after a relay restart. The relay never receives the Paseo daemon credential or the host's `token → agent` mapping.
+In the plugin, keep your relay selected and set **Custom client** to `https://rooms-ui.example.com`. Create a fresh link and verify a second browser can load history and exchange a message. The client build contains no conversation data or daemon credential; those arrive only over the room channel after invitation validation.
+
+You can instead keep the published GitLab Pages client and use only your relay, but that is **not** a fully self-hosted delivery model. For full control, both selected origins must be under your administration. Existing invitations retain their chosen client and relay; configuration changes affect new links only.
 
 ## Operate safely
 
