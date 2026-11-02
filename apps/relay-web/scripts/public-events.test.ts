@@ -108,6 +108,51 @@ test("projects the plan text and only ExitPlanMode's accept/reject actions", () 
   );
 });
 
+test("shares Codex question prompts through live events without private input", () => {
+  const event = publicStreamEvent({
+    type: "permission_requested",
+    request: {
+      id: "codex-question",
+      kind: "question",
+      name: "request_user_input",
+      title: "Question",
+      input: {
+        questions: [
+          {
+            id: "scope",
+            header: "Scope",
+            question: "Which scope?",
+            options: [{ label: "Small" }],
+          },
+        ],
+        private: "must stay local",
+      },
+      metadata: { threadId: "private-thread" },
+    },
+  });
+  assert.deepEqual(event, {
+    type: "permission_requested",
+    kind: "question",
+    request: {
+      id: "codex-question",
+      kind: "question",
+      title: "Question",
+      description: null,
+      actions: [],
+      prompts: [
+        {
+          question: "Which scope?",
+          header: "Scope",
+          options: [{ label: "Small", description: null }],
+          multiSelect: false,
+          allowOther: false,
+        },
+      ],
+      plan: null,
+    },
+  });
+});
+
 test("turns every host-only permission kind into a non-actionable redacted notice", () => {
   for (const kind of ["tool", "plan", "mode", "other"]) {
     assert.deepEqual(

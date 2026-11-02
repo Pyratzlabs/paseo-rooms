@@ -139,29 +139,40 @@ test("projects Codex request_user_input choices and text-only questions", () => 
 });
 
 test("rebuilds Codex answers keyed by header while preserving original input", () => {
-  assert.deepEqual(buildRoomQuestionUpdatedInput(codexQuestion, {
-    answers: [
-      { questionIndex: 0, optionLabels: ["Small"] },
-      { questionIndex: 1, optionLabels: [], other: "Check billing" },
-    ],
-  }), {
-    ...codexQuestion.input,
-    answers: { Scope: "Small", Notes: "Check billing" },
-  });
+  assert.deepEqual(
+    buildRoomQuestionUpdatedInput(codexQuestion, {
+      answers: [
+        { questionIndex: 0, optionLabels: ["Small"] },
+        { questionIndex: 1, optionLabels: [], other: "Check billing" },
+      ],
+    }),
+    {
+      ...codexQuestion.input,
+      answers: { Scope: "Small", Notes: "Check billing" },
+    },
+  );
 });
 
 test("rejects free text for Codex choices without an Other path", () => {
   const request = {
     ...codexQuestion,
-    input: { questions: [{ ...codexQuestion.input.questions[0], isOther: false }] },
+    input: {
+      questions: [{ ...codexQuestion.input.questions[0], isOther: false }],
+    },
   };
   assert.equal(projectRoomQuestion(request)?.prompts[0]?.allowOther, false);
-  assert.equal(buildRoomQuestionUpdatedInput(request, {
-    answers: [{ questionIndex: 0, optionLabels: [], other: "Unlisted" }],
-  }), null);
-  assert.equal(buildRoomQuestionUpdatedInput(request, {
-    answers: [{ questionIndex: 0, optionLabels: ["Unlisted"] }],
-  }), null);
+  assert.equal(
+    buildRoomQuestionUpdatedInput(request, {
+      answers: [{ questionIndex: 0, optionLabels: [], other: "Unlisted" }],
+    }),
+    null,
+  );
+  assert.equal(
+    buildRoomQuestionUpdatedInput(request, {
+      answers: [{ questionIndex: 0, optionLabels: ["Unlisted"] }],
+    }),
+    null,
+  );
 });
 
 test("projects only the explicit ExitPlanMode approval capability", () => {

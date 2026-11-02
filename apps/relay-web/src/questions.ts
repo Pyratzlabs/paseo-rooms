@@ -38,6 +38,7 @@ interface QuestionPrompt {
   header?: unknown;
   options?: unknown;
   multiSelect?: unknown;
+  isOther?: unknown;
 }
 interface PermissionRequest {
   id?: unknown;
@@ -84,7 +85,7 @@ function projectExitPlanActions(
   });
 }
 
-function projectPrompts(input: unknown): RoomQuestionPrompt[] {
+function projectPrompts(input: unknown, codex = false): RoomQuestionPrompt[] {
   if (
     !input ||
     typeof input !== "object" ||
@@ -116,16 +117,16 @@ function projectPrompts(input: unknown): RoomQuestionPrompt[] {
             ]
           : [],
       );
-      if (!options.length) return [];
+      if (!options.length && !codex) return [];
       return [
         {
           question: prompt.question,
           header: prompt.header,
           options,
           multiSelect: prompt.multiSelect === true,
-          // AskUserQuestion always supplies the host-side Other path; it is not
-          // an option in the daemon payload.
-          allowOther: true,
+          // Claude always supplies Other; Codex marks it with isOther and
+          // also supports text-only prompts with no options.
+          allowOther: !codex || prompt.isOther === true || !options.length,
         },
       ];
     },
@@ -158,7 +159,9 @@ export function projectRoomQuestion(
   if (request.kind !== "question") return null;
   const actions = projectActions(request.actions);
   const prompts =
-    request.name === "AskUserQuestion" ? projectPrompts(request.input) : [];
+    request.name === "AskUserQuestion" || request.name === "request_user_input"
+      ? projectPrompts(request.input, request.name === "request_user_input")
+      : [];
   return {
     id: request.id,
     kind: "question",
@@ -202,16 +205,21 @@ export function roomQuestionActionBehavior(
 }
 
 /**
- * Rebuild the only supported AskUserQuestion answer shape from a compact
+ * Rebuild the provider's question answer shape from a compact
  * collaborator submission. The original tool input stays server-side.
  */
 export function buildRoomQuestionUpdatedInput(
   request: PermissionRequest,
   response: unknown,
 ): Record<string, unknown> | null {
-  if (request.kind !== "question" || request.name !== "AskUserQuestion")
+  if (
+    request.kind !== "question" ||
+    (request.name !== "AskUserQuestion" &&
+      request.name !== "request_user_input")
+  )
     return null;
-  const prompts = projectPrompts(request.input);
+  const codex = request.name === "request_user_input";
+  const prompts = projectPrompts(request.input, codex);
   if (!prompts.length || !response || typeof response !== "object") return null;
   const answers = (response as Partial<RoomQuestionResponse>).answers;
   if (!Array.isArray(answers) || answers.length !== prompts.length) return null;
@@ -234,10 +242,12 @@ export function buildRoomQuestionUpdatedInput(
     const other = typeof answer.other === "string" ? answer.other.trim() : "";
     if (
       (!prompt.multiSelect && optionLabels.length > 1) ||
+      (other && !prompt.allowOther) ||
       (!optionLabels.length && !other)
     )
       return null;
-    answerMap[prompt.question] = [
+    // Paseo's Codex adapter looks up answers by header, Claude by full text.
+    answerMap[codex ? prompt.header : prompt.question] = [
       ...optionLabels,
       ...(other ? [other] : []),
     ].join(", ");
