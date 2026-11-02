@@ -13,3 +13,8 @@ apps/relay-web/.e2ee-smoke/
 
 # Staged GitHub Pages client artifact.
 .pages-site/
+
+# Local/private deployment helpers.
+ops/gitlab/__pycache__/
+release-artifact/
+.relay-deploy-attempted

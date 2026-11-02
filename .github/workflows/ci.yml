@@ -66,6 +66,7 @@ jobs:
       - run: npm run test:public-events
       - run: npm run test:presence
       - run: npm run test:ci
+      - run: npm run test:deployment
       - run: npm run test:lock
 
   plugin-verify:

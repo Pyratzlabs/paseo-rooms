@@ -35,6 +35,7 @@
     "test:questions": "npm run test:questions --workspace @paseo-rooms/relay-web",
     "test:public-events": "npm run test:public-events --workspace @paseo-rooms/relay-web",
     "test:presence": "npm run test:presence --workspace @paseo-rooms/relay-web",
+    "test:deployment": "node --test ops/gitlab/*.test.mjs && python3 ops/gitlab/remote_test.py",
     "test:pages": "npm run build:pages && node --test apps/relay-web/scripts/github-pages.test.mjs",
     "test:ci": "npm run test:ci --workspace @paseo-rooms/relay-web",
     "test:lock": "npm run test:lock --workspace @paseo-rooms/relay-web",
