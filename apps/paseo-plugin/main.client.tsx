@@ -54,7 +54,10 @@ const ThemeSchema = z.object({
   }),
 });
 
-export function SharePanel({ theme, agentId }: PluginAgentPanelProps) {
+export function SharePanel({
+  theme,
+  params: { agentId },
+}: PluginAgentPanelProps) {
   const { colors } = ThemeSchema.parse(theme);
   const agent = useAgent(agentId, ({ title, status }) => ({ title, status }));
   const callShare = useRpc(shareSessionRpc);

@@ -7,8 +7,8 @@ activates the plugin.
 
 ## Install
 
-Paseo 0.12.0 or newer within the 0.12 series is required on both the daemon and
-connected app. All 0.12.x patch releases are accepted; 0.13 requires a compatibility
+Paseo 0.14.0 or newer within the 0.14 series is required on both the daemon and
+connected app. All 0.14.x patch releases are accepted; 0.15 requires a compatibility
 review. Older versions are unsupported. The supported installation path is a
 trusted local checkout:
 

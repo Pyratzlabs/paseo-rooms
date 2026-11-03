@@ -10,9 +10,9 @@ does not require a separate checkout path or a `roomsPath` configuration file.
 
 ## Requirements
 
-The plugin requires Paseo 0.12.0 or newer within the 0.12 series on both the daemon
-and connected app. All 0.12.x patch releases are accepted without a manifest update;
-0.13 requires a compatibility review. Older versions are unsupported.
+The plugin requires Paseo 0.14.0 or newer within the 0.14 series on both the daemon
+and connected app. All 0.14.x patch releases are accepted without a manifest update;
+0.15 requires a compatibility review. Older versions are unsupported.
 Check the Paseo command that you will use for installation:
 
 ```bash

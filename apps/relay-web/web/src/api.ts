@@ -1,8 +1,8 @@
 export interface RoomQuestion {
   id: string;
   kind: "question" | "plan";
-  title?: string;
-  description?: string;
+  title?: string | null;
+  description?: string | null;
   actions: Array<{ id: string; label?: string }>;
   prompts: Array<{
     question: string;
@@ -10,6 +10,11 @@ export interface RoomQuestion {
     options: Array<{ label: string; description?: string | null }>;
     multiSelect: boolean;
     allowOther: boolean;
+    allowEmpty?: boolean;
+    placeholder?: string;
+    dismissLabel?: string;
+    isSecret?: boolean;
+    multiline?: boolean;
   }>;
   plan?: string | null;
 }

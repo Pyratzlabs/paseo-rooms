@@ -116,8 +116,8 @@ paseo plugin install "$PWD"
 paseo plugin reload paseo-rooms
 ```
 
-Paseo 0.12.0 or newer within the 0.12 series is required on both the daemon and
-connected app. All 0.12.x patch releases are accepted; 0.13 requires a compatibility
+Paseo 0.14.0 or newer within the 0.14 series is required on both the daemon and
+connected app. All 0.14.x patch releases are accepted; 0.15 requires a compatibility
 review. The plugin declares its supported version range and builds separate
 client/server bundles from the
 monorepo sources. Check the command that will install the

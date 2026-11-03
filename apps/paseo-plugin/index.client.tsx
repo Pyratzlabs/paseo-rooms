@@ -3,11 +3,10 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { SharePanel } from "./main.client";
 
 export default function contribute(plugin: PluginClientContext): PluginCleanup {
-  plugin.addWorkspacePanel({
+  plugin.addAgentPanel({
     id: "share-session",
     title: "Share session",
     icon: "Share2",
-    context: "agent",
     Component: SharePanel,
   });
   plugin.addCommandCenterItem({
