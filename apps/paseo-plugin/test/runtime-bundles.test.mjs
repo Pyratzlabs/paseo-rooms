@@ -52,7 +52,7 @@ test("runtime bundles activate independently and keep room authority server-side
     const panels = [];
     const commands = [];
     const clientCleanup = await activate(client, {
-      addWorkspacePanel: (panel) => panels.push(panel),
+      addAgentPanel: (panel) => panels.push(panel),
       addCommandCenterItem: (command) => commands.push(command),
     });
     assert.equal(
@@ -98,7 +98,7 @@ test("runtime bundles activate independently and keep room authority server-side
         await activate(
           client,
           {
-            addWorkspacePanel: (panel) => {
+            addAgentPanel: (panel) => {
               Panel = panel.Component;
             },
             addCommandCenterItem: () => {},
@@ -145,7 +145,7 @@ test("runtime bundles activate independently and keep room authority server-side
           },
         );
         const tree = Panel({
-          agentId: "test-agent",
+          params: { agentId: "test-agent" },
           theme: {
             colors: {
               surface0: "white",

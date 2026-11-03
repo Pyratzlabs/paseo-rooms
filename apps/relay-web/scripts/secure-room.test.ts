@@ -189,7 +189,9 @@ function fakeDependencies(): {
   publish(
     event:
       | { type: "turn_started"; provider: string }
-      | { type: "replacement"; epoch: string },
+      | { type: "replacement"; epoch: string }
+      | { type: "subscription_restored" }
+      | { type: "error"; error: string },
   ): void;
 } {
   let subscriber: Parameters<SecureRoomDeps["subscribeAgent"]>[1] | null = null;
@@ -198,6 +200,14 @@ function fakeDependencies(): {
     sentMessages,
     publish(event) {
       if (event.type === "replacement") {
+        subscriber?.({ agentId: "agent", event });
+        return;
+      }
+      if (event.type === "subscription_restored") {
+        subscriber?.({ agentId: "agent", subscriptionId: "restored", event });
+        return;
+      }
+      if (event.type === "error") {
         subscriber?.({ agentId: "agent", event });
         return;
       }
@@ -461,55 +471,62 @@ test("secure room bounds an oversized welcome history without dropping the clien
   }
 });
 
-test("Paseo timeline replacement disconnects guests so rejoining fetches fresh history", async () => {
-  const room = createRoom("agent", "Replacement room");
-  const fake = fakeDependencies();
-  try {
-    for (const text of ["previous", "replacement history"]) {
-      const [serverSocket, browserSocket] = socketPair();
-      const received = receivedRecords();
-      fake.deps.fetchFullHistory = async () => [
-        {
-          item: { type: "message", text },
-          timestamp: "2026-09-22T00:00:00.000Z",
-        },
-      ];
-      const opened = openSecureRoomSocket(
-        `/v2/rooms/${room.token}/ws`,
-        serverSocket,
-        () => true,
-        async () => true,
-        fake.deps,
-      );
-      const channel = await createClientChannel(
-        browserTransport(browserSocket),
-        room.hostPublicKey,
-        { onmessage: received.onmessage, onerror() {} },
-      );
-      assert.equal(await opened, true);
-      await channel.send(
-        encoder.encode(
-          JSON.stringify({
-            v: 2,
-            kind: "join",
-            joinAttemptId: text,
-            inviteSecret: room.inviteSecret,
-            displayName: "Alice",
-          }),
-        ).buffer,
-      );
-      const welcome = await received.next();
-      assert.equal(welcome.kind, "welcome");
-      assert.deepEqual(
-        welcome.payload.history,
-        await fake.deps.fetchFullHistory("agent"),
-      );
-      fake.publish({ type: "replacement", epoch: "new-epoch" });
-      await waitFor(() => browserSocket.closed);
+test("Paseo timeline lifecycle changes disconnect guests so rejoining fetches fresh history", async () => {
+  const controls = [
+    { type: "replacement", epoch: "new-epoch" },
+    { type: "subscription_restored" },
+    { type: "error", error: "subscription lost" },
+  ] as const;
+  for (const control of controls) {
+    const room = createRoom("agent", "Replacement room");
+    const fake = fakeDependencies();
+    try {
+      for (const text of ["previous", "replacement history"]) {
+        const [serverSocket, browserSocket] = socketPair();
+        const received = receivedRecords();
+        fake.deps.fetchFullHistory = async () => [
+          {
+            item: { type: "message", text },
+            timestamp: "2026-09-22T00:00:00.000Z",
+          },
+        ];
+        const opened = openSecureRoomSocket(
+          `/v2/rooms/${room.token}/ws`,
+          serverSocket,
+          () => true,
+          async () => true,
+          fake.deps,
+        );
+        const channel = await createClientChannel(
+          browserTransport(browserSocket),
+          room.hostPublicKey,
+          { onmessage: received.onmessage, onerror() {} },
+        );
+        assert.equal(await opened, true);
+        await channel.send(
+          encoder.encode(
+            JSON.stringify({
+              v: 2,
+              kind: "join",
+              joinAttemptId: text,
+              inviteSecret: room.inviteSecret,
+              displayName: "Alice",
+            }),
+          ).buffer,
+        );
+        const welcome = await received.next();
+        assert.equal(welcome.kind, "welcome");
+        assert.deepEqual(
+          welcome.payload.history,
+          await fake.deps.fetchFullHistory("agent"),
+        );
+        fake.publish(control);
+        await waitFor(() => browserSocket.closed);
+      }
+    } finally {
+      closeSecureRoom(room.token);
+      deleteRoom(room.token);
     }
-  } finally {
-    closeSecureRoom(room.token);
-    deleteRoom(room.token);
   }
 });
 

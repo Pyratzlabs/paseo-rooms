@@ -1,4 +1,5 @@
-// Normalized permission shapes audited against @getpaseo/server 0.7.2.
+// Normalized permission shapes audited against @getpaseo/server 0.14.0,
+// plus the earlier combined optional-comment form for compatibility.
 // Keep these synthetic: daemon metadata and original inputs never go to clients.
 export const providerQuestions = [
   {
@@ -6,6 +7,16 @@ export const providerQuestions = [
     name: "question",
     multiSelect: true,
     allowOther: true,
+  },
+  { provider: "codex", name: "request_user_input_async", isOther: true },
+  { provider: "pi", name: "Pi ask_user_question", allowOther: true },
+  { provider: "omp", name: "OMP ask", multiSelect: true, allowOther: true },
+  {
+    provider: "muse",
+    name: "ask_user",
+    multiSelect: true,
+    allowOther: true,
+    allowEmpty: true,
   },
   { provider: "pi", name: "Pi select" },
   { provider: "pi", name: "Pi confirm", options: ["Yes", "No"] },
